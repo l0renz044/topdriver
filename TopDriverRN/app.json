@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "TopDriver",
+    "slug": "topdriver",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "android": {
+      "package": "com.topdriver.app",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "TopDriver a besoin de votre position GPS pour surveiller la vitesse, même en arrière-plan.",
+          "locationAlwaysPermission": "TopDriver surveille la vitesse en arrière-plan.",
+          "locationWhenInUsePermission": "TopDriver utilise votre GPS pour mesurer la vitesse.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true
+        }
+      ],
+      [
+        "expo-task-manager"
+      ]
+    ]
+  }
+}
