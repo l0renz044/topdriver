@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.23-RN";
+const APP_VERSION = "v6.24-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -633,14 +633,13 @@ function LimitModal({ visible, currentLimit, unit, t, onApply, onReset, onClose,
 // ═══════════════════════════════════════
 // Panneau de limitation SVG (style panneau français)
 function SpeedSign({ limit, size = 48 }) {
-  const fs = size * 0.38;
   const digits = String(limit).length;
-  const fontSz = digits >= 3 ? fs * 0.72 : fs;
+  const fontSize = digits >= 3 ? 34 : 40;
   return (
-    <Svg width={size} height={size} viewBox="0 0 100 100">
-      <Circle cx="50" cy="50" r="46" fill="white" stroke="#cc0000" strokeWidth="12" />
-      <SvgText x="50" y="50" textAnchor="middle" dominantBaseline="central"
-        fontSize={fontSz} fontWeight="bold" fill="#111">{limit}</SvgText>
+    <Svg width={size} height={size} viewBox="0 0 110 110">
+      <Circle cx="55" cy="55" r="46" fill="white" stroke="#cc0000" strokeWidth="14" />
+      <SvgText x="55" y="55" textAnchor="middle" dominantBaseline="central"
+        fontSize={fontSize} fontWeight="bold" fill="#111">{limit}</SvgText>
     </Svg>
   );
 }
