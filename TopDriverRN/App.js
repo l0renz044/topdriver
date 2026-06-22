@@ -17,8 +17,8 @@ import * as DocumentPicker from "expo-document-picker";
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
 const APP_VERSION = "v6.21.1DBG-RN";
-const VERSION_CHECK_URL = "https://1drv.ms/u/c/ac057e6da3f8bd0d/IQCSPUe_bVSpRbSd7I-WagDGAXx_rEPye9y9UwZHACNjSag?e=HavpYq&download=1";
-const APK_URL = "https://1drv.ms/u/c/ac057e6da3f8bd0d/IQBaiKLmeBnaT5euYK51JNQkAa-e6ThufcD3nEn1dT4IewA?e=449b3Y&download=1";
+const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
+const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
 const T = {
   fr: {
