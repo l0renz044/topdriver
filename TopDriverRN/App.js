@@ -16,7 +16,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.21.1DBG-RN";
+const APP_VERSION = "v6.22-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -1033,20 +1033,13 @@ export default function App() {
     loadReps().then(setReports);
     // Vérifier si une nouvelle version est disponible
     fetch(VERSION_CHECK_URL, { headers: { "Cache-Control": "no-cache" } })
-      .then(r => {
-        console.log("Version check HTTP status:", r.status);
-        return r.text();
+      .then(r => r.json())
+      .then(data => {
+        if (data?.latest && data.latest !== APP_VERSION) {
+          setUpdateInfo({ latest: data.latest });
+        }
       })
-      .then(text => {
-        console.log("Version check raw response:", text.substring(0, 200));
-        try {
-          const data = JSON.parse(text);
-          if (data?.latest && data.latest !== APP_VERSION) {
-            setUpdateInfo({ latest: data.latest });
-          }
-        } catch (e) { console.warn("Version check JSON parse error:", e.message); }
-      })
-      .catch(e => console.warn("Version check fetch error:", e.message));
+      .catch(() => {}); // silencieux si pas de réseau
     // Charger les paramètres sauvegardés
     AsyncStorage.getItem(SETTINGS_KEY).then(raw => {
       if (raw) {
@@ -1615,15 +1608,17 @@ export default function App() {
 
       {/* Bannière de mise à jour */}
       {updateInfo && (
-        <TouchableOpacity
-          style={{ backgroundColor: C.blue, paddingVertical: 10, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}
-          onPress={() => Linking.openURL(APK_URL).catch(() => {})}
-        >
-          <Text style={{ color: "#fff", fontSize: 13, fontWeight: "700" }}>
-            🆕 Mise à jour disponible : {updateInfo.latest}
-          </Text>
-          <Text style={{ color: "#fff", fontSize: 12, opacity: 0.85 }}>Télécharger →</Text>
-        </TouchableOpacity>
+        <View style={{ backgroundColor: C.blue, paddingVertical: 10, paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+          <TouchableOpacity style={{ flex: 1 }} onPress={() => Linking.openURL(APK_URL).catch(() => {})}>
+            <Text style={{ color: "#fff", fontSize: 13, fontWeight: "700" }}>
+              🆕 Mise à jour disponible : {updateInfo.latest}
+            </Text>
+            <Text style={{ color: "#fff", fontSize: 12, opacity: 0.85 }}>Télécharger →</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setUpdateInfo(null)} style={{ paddingLeft: 12 }}>
+            <Text style={{ color: "#fff", fontSize: 18, fontWeight: "700" }}>✕</Text>
+          </TouchableOpacity>
+        </View>
       )}
 
       {/* Gauge row: panneau gauche + jauge droite */}
