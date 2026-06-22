@@ -8,6 +8,7 @@ import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 import { useKeepAwake } from "expo-keep-awake";
 import { WebView } from "react-native-webview";
+import Svg, { Circle, Text as SvgText } from "react-native-svg";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy";
 import * as IntentLauncher from "expo-intent-launcher";
@@ -16,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.22-RN";
+const APP_VERSION = "v6.23-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -630,6 +631,101 @@ function LimitModal({ visible, currentLimit, unit, t, onApply, onReset, onClose,
 // ═══════════════════════════════════════
 // MODAL: REPORT
 // ═══════════════════════════════════════
+// Panneau de limitation SVG (style panneau français)
+function SpeedSign({ limit, size = 48 }) {
+  const fs = size * 0.38;
+  const digits = String(limit).length;
+  const fontSz = digits >= 3 ? fs * 0.72 : fs;
+  return (
+    <Svg width={size} height={size} viewBox="0 0 100 100">
+      <Circle cx="50" cy="50" r="46" fill="white" stroke="#cc0000" strokeWidth="12" />
+      <SvgText x="50" y="50" textAnchor="middle" dominantBaseline="central"
+        fontSize={fontSz} fontWeight="bold" fill="#111">{limit}</SvgText>
+    </Svg>
+  );
+}
+
+// Liste d'infractions groupées par limitation, avec accordéon
+function InfractionGroups({ infractions, unit, ul, t, toSpd, fmtTime, fmtDur }) {
+  const counted = (infractions || []).filter(ep => ep.sev !== "tolerance");
+  const [openGroups, setOpenGroups] = useState({});
+
+  if (counted.length === 0) {
+    return (
+      <View style={gs.block}>
+        <Text style={gs.blockTitle}>🚨 {t.totalInf}</Text>
+        <Text style={gs.empty}>{t.noInfraction}</Text>
+      </View>
+    );
+  }
+
+  // Grouper par limite, trier par ordre croissant
+  const groups = {};
+  counted.forEach(ep => {
+    const k = ep.limit;
+    if (!groups[k]) groups[k] = [];
+    groups[k].push(ep);
+  });
+  const sortedLimits = Object.keys(groups).map(Number).sort((a, b) => a - b);
+
+  const toggle = limit => setOpenGroups(prev => ({ ...prev, [limit]: !prev[limit] }));
+
+  return (
+    <View style={gs.block}>
+      <Text style={[gs.blockTitle, { marginBottom: 10 }]}>🚨 {t.totalInf} ({counted.length})</Text>
+      {sortedLimits.map(limit => {
+        const eps = groups[limit];
+        const isOpen = !!openGroups[limit];
+        return (
+          <View key={limit} style={{ marginBottom: 8 }}>
+            {/* En-tête du groupe — panneau + compteur */}
+            <TouchableOpacity
+              style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 6 }}
+              onPress={() => toggle(limit)}
+              activeOpacity={0.7}
+            >
+              <SpeedSign limit={limit} size={44} />
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 14, fontWeight: "700", color: C.text }}>
+                  Zone {toSpd(limit, unit)} {ul}
+                </Text>
+                <Text style={{ fontSize: 12, color: C.muted }}>
+                  {eps.length} infraction{eps.length > 1 ? "s" : ""}
+                </Text>
+              </View>
+              <Text style={{ fontSize: 18, color: C.muted }}>{isOpen ? "▲" : "▼"}</Text>
+            </TouchableOpacity>
+
+            {/* Liste dépliée */}
+            {isOpen && (
+              <View style={{ paddingLeft: 56, gap: 6 }}>
+                {eps.map((ep, i) => (
+                  <View key={i} style={[gs.infRow, { marginBottom: 0 }]}>
+                    <View style={[gs.infDot, { backgroundColor: ep.color }]} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={gs.infTxt}>
+                        +{toSpd(ep.avgOver, unit)} {ul} moy. · max +{toSpd(ep.maxOver, unit)}
+                      </Text>
+                      <Text style={gs.infTime}>
+                        {fmtTime(new Date(ep.startTime))} · {fmtDur(ep.duration)}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Séparateur entre groupes */}
+            {sortedLimits.indexOf(limit) < sortedLimits.length - 1 && (
+              <View style={{ height: 1, backgroundColor: C.border, marginTop: 6 }} />
+            )}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 function ReportModal({ visible, report, t, unit, onClose, onSave, onConsolidate, isProcessing, processingProgress }) {
   if (!report) return null;
   const inf = report.infractions || []; // toujours par rapport à la limite stricte
@@ -696,26 +792,8 @@ function ReportModal({ visible, report, t, unit, onClose, onSave, onConsolidate,
             ) : null;
           })()}
 
-          {/* Bloc 4 — Épisodes d'infractions */}
-          <View style={gs.block}>
-            <Text style={gs.blockTitle}>🚨 {t.totalInf}</Text>
-            {counted.length === 0
-              ? <Text style={gs.empty}>{t.noInfraction}</Text>
-              : inf.filter(i => i.sev !== "tolerance").map((ep, i) => (
-                <View key={i} style={gs.infRow}>
-                  <View style={[gs.infDot, { backgroundColor: ep.color }]} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={gs.infTxt}>
-                      +{toSpd(ep.avgOver, unit)} {ul} moy. · max +{toSpd(ep.maxOver, unit)}
-                    </Text>
-                    <Text style={gs.infTime}>
-                      {fmtTime(new Date(ep.startTime))} · {fmtDur(ep.duration)} · {ep.sev} · limite {toSpd(ep.limit, unit)} {ul}
-                    </Text>
-                  </View>
-                </View>
-              ))
-            }
-          </View>
+          {/* Bloc 4 — Épisodes d'infractions groupés par limitation */}
+          <InfractionGroups infractions={inf} unit={unit} ul={ul} t={t} toSpd={toSpd} fmtTime={fmtTime} fmtDur={fmtDur} />
 
           {/* Stats réseau du polling temps réel (uniquement si pas encore consolidé) */}
           {report.osmAttempts != null && !report.consolidatedDate && !isProcessing && (
