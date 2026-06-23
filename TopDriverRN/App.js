@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.25-RN";
+const APP_VERSION = "v6.26-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -52,13 +52,6 @@ const T = {
     history: "Historique", settings: "Paramètres",
     noHistory: "Aucun rapport sauvegardé.",
     deleteReport: "Supprimer",
-    editLimit: "Modifier la limite",
-    applyLimit: "Appliquer",
-    resetLimit: "↺ Rétablir automatique",
-    manualLimit: "Manuel ✏️",
-    userLimitsSaved: "Limite mémorisée ✓",
-    userLimitsCleared: "Limites effacées",
-    clearLimits: "Effacer les limites mémorisées",
     verdicts: [
       "Conduite très dangereuse ! ⚠️",
       "Conduite dangereuse.",
@@ -97,13 +90,6 @@ const T = {
     history: "History", settings: "Settings",
     noHistory: "No saved reports.",
     deleteReport: "Delete",
-    editLimit: "Edit speed limit",
-    applyLimit: "Apply",
-    resetLimit: "↺ Restore automatic",
-    manualLimit: "Manual ✏️",
-    userLimitsSaved: "Limit saved ✓",
-    userLimitsCleared: "Limits cleared",
-    clearLimits: "Clear saved limits",
     verdicts: [
       "Very dangerous driving! ⚠️",
       "Dangerous driving.",
@@ -378,11 +364,7 @@ async function fetchLimit(lat, lon) {
 }
 
 // ── User limits ──────────────────────────────
-const ULK = "td_ulimits";
-const loadUL = async () => { try { const r = JSON.parse(await AsyncStorage.getItem(ULK) || "[]"); return r.filter(e => Date.now() - e.t < 7776000000); } catch { return []; } };
-const findUL = async (lat, lon) => { for (const e of await loadUL()) { if (haversine(lat, lon, e.lat, e.lon) * 1000 <= 50) return e.limit; } return null; };
-const saveUL = async (lat, lon, limit) => { const l = (await loadUL()).filter(e => haversine(lat, lon, e.lat, e.lon) * 1000 > 50); l.push({ lat, lon, limit, t: Date.now() }); await AsyncStorage.setItem(ULK, JSON.stringify(l)); };
-const clearUL = () => AsyncStorage.removeItem(ULK);
+
 
 // ── Reports storage ──────────────────────────
 const RK = "td_reports";
@@ -591,43 +573,6 @@ const Toast = ({ msg }) => msg ? (
 // ═══════════════════════════════════════
 // MODAL: LIMIT EDITOR
 // ═══════════════════════════════════════
-const PRESETS = [20, 30, 50, 70, 80, 90, 110, 130];
-
-function LimitModal({ visible, currentLimit, unit, t, onApply, onReset, onClose, onClearLimits }) {
-  const [sel, setSel] = useState(currentLimit);
-  useEffect(() => { setSel(currentLimit); }, [currentLimit]);
-  return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
-      <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
-        <View style={gs.modalHeader}>
-          <Text style={gs.modalTitle}>{t.editLimit}</Text>
-          <TouchableOpacity onPress={onClose} style={gs.closeBtn}>
-            <Text style={gs.closeBtnTxt}>✕</Text>
-          </TouchableOpacity>
-        </View>
-        <ScrollView contentContainerStyle={{ padding: 20 }}>
-          <View style={gs.presets}>
-            {PRESETS.map(v => (
-              <TouchableOpacity key={v} style={[gs.presetBtn, sel === v && gs.presetBtnSel]} onPress={() => setSel(v)}>
-                <Text style={[gs.presetTxt, sel === v && gs.presetTxtSel]}>{toSpd(v, unit)}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          <TouchableOpacity style={[gs.btn, gs.btnBlue, { marginTop: 24 }]} onPress={() => onApply(sel)}>
-            <Text style={gs.btnTxt}>{t.applyLimit} — {toSpd(sel, unit)} {unit === "mph" ? "mph" : "km/h"}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[gs.btn, gs.btnGhost, { marginTop: 10 }]} onPress={onReset}>
-            <Text style={gs.btnGhostTxt}>{t.resetLimit}</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[gs.btn, gs.btnGhost, { marginTop: 10, borderColor: C.red + "50" }]} onPress={onClearLimits}>
-            <Text style={[gs.btnGhostTxt, { color: C.red }]}>{t.clearLimits}</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </SafeAreaView>
-    </Modal>
-  );
-}
-
 // ═══════════════════════════════════════
 // MODAL: REPORT
 // ═══════════════════════════════════════
@@ -826,14 +771,17 @@ function ReportModal({ visible, report, t, unit, onClose, onSave, onConsolidate,
               )}
             </View>
           )}
-          {onConsolidate && !report.consolidatedDate && (
-            <TouchableOpacity
-              style={[gs.btn, { backgroundColor: isProcessing ? "#fcd34d" : "#f59e0b" }]}
-              onPress={onConsolidate}
-              disabled={isProcessing}
-            >
-              <Text style={gs.btnTxt}>{isProcessing ? "⏳ Consolidation en cours..." : "🔄 Consolider les infractions"}</Text>
-            </TouchableOpacity>
+          {isProcessing && (
+            <View style={[gs.block, { backgroundColor: "rgba(14,165,233,.08)", marginBottom: 12 }]}>
+              <Text style={{ fontSize: 12, color: C.blue, textAlign: "center", fontWeight: "700" }}>
+                ⏳ Consolidation en cours...
+              </Text>
+              {processingProgress && processingProgress.total > 0 && (
+                <Text style={{ fontSize: 12, color: C.blue, textAlign: "center", marginTop: 4 }}>
+                  {processingProgress.done} / {processingProgress.total} points
+                </Text>
+              )}
+            </View>
           )}
           {onSave && (
             <TouchableOpacity style={[gs.btn, gs.btnBlue]} onPress={async () => {
@@ -1048,7 +996,6 @@ export default function App() {
   const [toast, setToast] = useState(null);
 
   // Modals
-  const [showLimit, setShowLimit] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -1067,7 +1014,6 @@ export default function App() {
   const [traj, setTraj] = useState([]);
   const [dist, setDist] = useState(0);
   const [zoneCooldown, setZoneCooldown] = useState(0);
-  const [isManual, setIsManual] = useState(false);
   const [reports, setReports] = useState([]);
   const [processingId, setProcessingId] = useState(null);
   const [updateInfo, setUpdateInfo] = useState(null); // { latest, url } si mise à jour dispo
@@ -1097,14 +1043,12 @@ export default function App() {
   const [osmStats, setOsmStats] = useState({ attempts: 0, failures: 0 });
   const currentConsolidated = useRef(null);
   const lastOsm = useRef(50);
-  const manualRef = useRef(false);
   const distRef = useRef(0);
   const bipRef = useRef(true);
 
   useEffect(() => { activeRef.current = active; }, [active]);
   useEffect(() => { limRef.current = limitInfo; }, [limitInfo]);
   useEffect(() => { coolRef.current = zoneCooldown; }, [zoneCooldown]);
-  useEffect(() => { manualRef.current = isManual; }, [isManual]);
   useEffect(() => { bipRef.current = bipEnabled; }, [bipEnabled]);
 
   useEffect(() => {
@@ -1230,11 +1174,7 @@ export default function App() {
     lastPosRef.current = null;
     osmAttemptsRef.current = 0; osmFailuresRef.current = 0; setOsmStats({ attempts: 0, failures: 0 });
     currentConsolidated.current = null; setCurrentConsolidatedDate(null);
-    // Initialiser lastOsm avec la limite actuelle de limRef
-    // Après un reset automatique, limRef vaut déjà 50
-    // En mode manuel, limRef vaut la limite choisie — et on ne veut pas
-    // qu'un fetch OSM à 50 soit vu comme un "changement de zone"
-    lastOsm.current = manualRef.current ? 50 : limRef.current.limit;
+    lastOsm.current = limRef.current.limit;
     cache.clear();
     // Vider les données background du trajet précédent
     AsyncStorage.removeItem(BG_TRAJ_KEY);
@@ -1325,23 +1265,14 @@ export default function App() {
       adaptRef.current = dSpd > 15 ? sStrong : dSpd > 5 ? sModerate : sStable;
 
       // Ne pas interroger OSM si aucun nouveau point de trajectoire n'a été retenu
-      // (évite de fetch en boucle quand le véhicule est immobile)
       if (newPointAdded && now - lastFetch.current > adaptRef.current) {
         lastFetch.current = now;
-        findUL(lat, lon).then(ul => {
-          if (ul !== null) { const i = { limit: ul, src: "👤 Personnel", road: "" }; setLimitInfo(i); limRef.current = i; return; }
-          osmAttemptsRef.current++;
-          fetchLimit(lat, lon).then(info => {
-            if (info.src === "hors ligne") osmFailuresRef.current++;
-            setOsmStats({ attempts: osmAttemptsRef.current, failures: osmFailuresRef.current });
-            if (manualRef.current) {
-              if (info.limit !== lastOsm.current) { setIsManual(false); manualRef.current = false; setLimitInfo(info); limRef.current = info; lastOsm.current = info.limit; coolRef.current = 3; setZoneCooldown(3); }
-              else { lastOsm.current = info.limit; }
-            } else {
-              if (info.limit !== lastOsm.current) { coolRef.current = 3; setZoneCooldown(3); }
-              lastOsm.current = info.limit; setLimitInfo(info); limRef.current = info;
-            }
-          });
+        osmAttemptsRef.current++;
+        fetchLimit(lat, lon).then(info => {
+          if (info.src === "hors ligne") osmFailuresRef.current++;
+          setOsmStats({ attempts: osmAttemptsRef.current, failures: osmFailuresRef.current });
+          if (info.limit !== lastOsm.current) { coolRef.current = 3; setZoneCooldown(3); }
+          lastOsm.current = info.limit; setLimitInfo(info); limRef.current = info;
         });
       }
 
@@ -1430,7 +1361,25 @@ export default function App() {
       if (isRegistered) await Location.stopLocationUpdatesAsync(BG_TASK);
     } catch {}
     clearInterval(timerRef.current);
-    setGpsStatus("ok"); setReportName("Rapport de trajet"); setScreen("end");
+    setGpsStatus("ok"); setReportName("Rapport de trajet");
+
+    // Lancer la consolidation automatique avant d'afficher le rapport
+    setScreen("consolidating");
+    try {
+      const { episodes, attempts, failures } = await consolidateInfractions(
+        trajRef.current,
+        (done, total) => setProcessingProgress({ done, total })
+      );
+      setInfractions(episodes);
+      currentConsolidated.current = { consolidatedDate: new Date().toISOString(), attempts, failures };
+      setCurrentConsolidatedDate(currentConsolidated.current.consolidatedDate);
+    } catch (e) {
+      console.warn("Consolidation échouée:", e.message);
+      // On affiche quand même le rapport avec les données brutes
+    } finally {
+      setProcessingProgress({ done: 0, total: 0 });
+    }
+    setScreen("end");
   };
 
   const saveReport = async () => {
@@ -1449,24 +1398,6 @@ export default function App() {
     };
     const updated = [rep, ...reports];
     await saveReps(updated); setReports(updated); showToast(t.saved);
-  };
-
-  // Consolidation du rapport courant (pas encore sauvegardé, écran de fin de trajet)
-  const consolidateCurrent = async () => {
-    setProcessingId("current"); setProcessingLabel("consolidation");
-    setProcessingProgress({ done: 0, total: 0 });
-    try {
-      const { episodes, attempts, failures } = await consolidateInfractions(traj, (done, total) => {
-        setProcessingProgress({ done, total });
-      });
-      setInfractions(episodes);
-      currentConsolidated.current = { consolidatedDate: new Date().toISOString(), attempts, failures };
-      setCurrentConsolidatedDate(currentConsolidated.current.consolidatedDate);
-    } catch (e) {
-      console.warn("Consolidation échouée:", e.message);
-    } finally {
-      setProcessingId(null); setProcessingLabel(""); setProcessingProgress({ done: 0, total: 0 });
-    }
   };
 
   // Consolidation d'un rapport déjà sauvegardé (depuis l'historique)
@@ -1519,26 +1450,8 @@ export default function App() {
       if (!data) return;
       const traj = data.points.map(p => ({ lat: p.lat, lon: p.lon, speed: p.speed, t: p.t, limitOSM: p.limitOSM ?? null }));
 
-      // Détection d'épisodes basée sur les limitOSM déjà connues (sans fetch), toujours en mode Strict
-      const episodes = [];
-      let curEp = null;
-      for (let i = 0; i < traj.length; i++) {
-        const pt = traj[i];
-        const lim = pt.limitOSM ?? 50;
-        const delta = Math.round(pt.speed) - lim;
-        if (delta > 0) {
-          if (!curEp) curEp = { startTime: new Date(pt.t).toISOString(), startTs: pt.t, overValues: [delta], limit: lim, coords: { lat: pt.lat, lon: pt.lon } };
-          else curEp.overValues.push(delta);
-        } else if (curEp) {
-          const duration = Math.round((pt.t - curEp.startTs) / 1000);
-          const avgOver = Math.round(curEp.overValues.reduce((s, v) => s + v, 0) / curEp.overValues.length);
-          const maxOver = Math.max(...curEp.overValues);
-          const sev = sevFromOver(avgOver);
-          if (sev !== "tolerance") episodes.push({ startTime: curEp.startTime, endTime: new Date(pt.t).toISOString(), duration, avgOver, maxOver, limit: curEp.limit, sev, color: colorFromSev(sev), coords: curEp.coords });
-          curEp = null;
-        }
-      }
-
+      showToast("⏳ Import en cours, consolidation...");
+      const { episodes, attempts, failures } = await consolidateInfractions(traj);
       const filtered = filterEpisodesForRadarScore(episodes);
       const sc = computeScore(filtered);
       const dist = traj.length > 1 ? traj.reduce((d, p, i) => i === 0 ? 0 : d + haversine(traj[i-1].lat, traj[i-1].lon, p.lat, p.lon), 0) : 0;
@@ -1549,6 +1462,8 @@ export default function App() {
         elapsed: data.elapsed, maxSpd, dist, infractions: episodes, traj,
         score: sc, unit: data.unit || "kmh",
         imported: true,
+        consolidatedDate: new Date().toISOString(),
+        consolidationAttempts: attempts, consolidationFailures: failures,
       };
       const updated = [rep, ...reports];
       await saveReps(updated); setReports(updated);
@@ -1622,6 +1537,23 @@ export default function App() {
     </SafeAreaView>
   );
 
+  // ── CONSOLIDATING SCREEN ──
+  if (screen === "consolidating") {
+    return (
+      <SafeAreaView style={[gs.safe, { justifyContent: "center", alignItems: "center", padding: 32 }]}>
+        <Text style={{ fontSize: 40, marginBottom: 20 }}>🔄</Text>
+        <Text style={{ fontSize: 18, fontWeight: "700", color: C.text, marginBottom: 8, textAlign: "center" }}>
+          Analyse du trajet en cours...
+        </Text>
+        {processingProgress.total > 0 && (
+          <Text style={{ fontSize: 14, color: C.muted, marginTop: 8 }}>
+            {processingProgress.done} / {processingProgress.total} points traités
+          </Text>
+        )}
+      </SafeAreaView>
+    );
+  }
+
   // ── END SCREEN ──
   if (screen === "end") {
     const sc = computeScore(filterEpisodesForRadarScore(infractions));
@@ -1651,7 +1583,7 @@ export default function App() {
           t={t} unit={unit}
           onClose={() => { setShowReport(false); setScreen("main"); }}
           onSave={saveReport}
-          onConsolidate={consolidateCurrent}
+          onConsolidate={undefined}
           isProcessing={processingId === "current"}
           processingProgress={processingProgress}
         />
@@ -1701,10 +1633,9 @@ export default function App() {
 
       {/* Gauge row: panneau gauche + jauge droite */}
       <View style={gs.gaugeCard}>
-        <TouchableOpacity style={[gs.limitSign, isManual && gs.limitSignManual]} onPress={() => setShowLimit(true)}>
+        <View style={gs.limitSign}>
           <Text style={gs.limitNum}>{toSpd(limitInfo.limit, unit)}</Text>
-          {isManual && <Text style={{ fontSize: 9, color: C.blue, marginTop: 2 }}>✏️</Text>}
-        </TouchableOpacity>
+        </View>
         <View style={{ flex: 1 }} />
         <Gauge speed={speed} limit={limitInfo.limit} active={active} unit={unit} />
       </View>
@@ -1761,51 +1692,18 @@ export default function App() {
       </View>
 
       {/* Modals */}
-      <LimitModal
-        visible={showLimit}
-        currentLimit={limitInfo.limit} unit={unit} t={t}
-        onApply={async v => {
-          const info = { limit: v, src: "👤 Manuel", road: "" };
-          setLimitInfo(info); limRef.current = info;
-          setIsManual(true); manualRef.current = true;
-          if (traj.length) { const l = traj[traj.length - 1]; await saveUL(l.lat, l.lon, v); showToast(t.userLimitsSaved); }
-          setShowLimit(false);
-        }}
-        onReset={() => {
-          setIsManual(false); manualRef.current = false;
-          lastFetch.current = 0;
-          // Fetch immédiat si on a une position GPS récente
-          if (traj.length > 0) {
-            const last = traj[traj.length - 1];
-            fetchLimit(last.lat, last.lon).then(info => {
-              setLimitInfo(info); limRef.current = info;
-              lastOsm.current = info.limit;
-            });
-          } else {
-            // Pas de position → remettre valeur par défaut
-            const def = { limit: 50, src: "défaut", road: "" };
-            setLimitInfo(def); limRef.current = def;
-            lastOsm.current = 50;
-          }
-          setShowLimit(false);
-        }}
-        onClose={() => setShowLimit(false)}
-        onClearLimits={() => {
-          clearUL();
-          setIsManual(false); manualRef.current = false;
-          const def = { limit: 50, src: "défaut", road: "" };
-          setLimitInfo(def); limRef.current = def;
-          lastOsm.current = 50; lastFetch.current = 0;
-          showToast(t.userLimitsCleared);
-          setShowLimit(false);
-        }}
-      />
-
       <HistoryModal
         visible={showHistory} reports={reports} t={t} unit={unit}
         onClose={() => setShowHistory(false)}
         onDelete={id => deleteReport(id)}
-        onView={rep => { setViewingRep(rep); setShowHistory(false); }}
+        onView={rep => {
+          setViewingRep(rep);
+          setShowHistory(false);
+          // Consolidation automatique si pas encore faite
+          if (!rep.consolidatedDate) {
+            consolidateReport(rep.id, rep.traj || []);
+          }
+        }}
         onSaveFile={rep => setSavingRep(rep)}
         onImport={handleImport}
         processingId={processingId}
@@ -1841,7 +1739,7 @@ export default function App() {
         <ReportModal
           visible={!!viewingRep} report={viewingRep} t={t} unit={viewingRep.unit || unit}
           onClose={() => { setViewingRep(null); setShowHistory(true); }}
-          onConsolidate={() => consolidateReport(viewingRep.id, viewingRep.traj || [])}
+          onConsolidate={undefined}
           isProcessing={processingId === viewingRep.id}
           processingProgress={processingProgress}
         />
@@ -1871,7 +1769,6 @@ const gs = StyleSheet.create({
   // Gauge card
   gaugeCard: { flexDirection: "row", alignItems: "center", marginHorizontal: 14, marginBottom: 6, backgroundColor: C.surface, borderRadius: 24, padding: 16, elevation: 2 },
   limitSign: { width: 72, height: 72, borderRadius: 36, borderWidth: 5, borderColor: C.red, alignItems: "center", justifyContent: "center", backgroundColor: C.surface, elevation: 3 },
-  limitSignManual: { borderColor: C.blue },
   limitNum: { fontFamily: F, fontSize: 26, fontWeight: "900", color: C.text },
   limSrc: { fontSize: 10, color: C.muted, textAlign: "center", marginBottom: 6, opacity: 0.7 },
 
