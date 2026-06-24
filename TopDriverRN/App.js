@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.27-RN";
+const APP_VERSION = "v6.28-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -689,9 +689,17 @@ function ReportModal({ visible, report, t, unit, onClose, onSave, onConsolidate,
           <Text style={gs.modalTitle}>{t.reportTitle}</Text>
         </View>
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
-          {/* Nom du rapport (lecture seule) */}
+          {/* Nom du rapport */}
           <View style={[gs.block, { marginBottom: 12 }]}>
-            <Text style={gs.histName}>{report.name || "Rapport de trajet"}</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Text style={gs.histName}>{report.name || "Rapport de trajet"}</Text>
+              {report.consolidatedDate && !isProcessing && (
+                <Text style={{ fontSize: 11, color: "#22c55e", fontWeight: "700" }}>✅</Text>
+              )}
+              {isProcessing && (
+                <Text style={{ fontSize: 11, color: C.blue, fontWeight: "700" }}>⏳</Text>
+              )}
+            </View>
             <Text style={gs.histDate}>{report.date ? fmtDate(new Date(report.date)) : ""}</Text>
           </View>
 
@@ -731,7 +739,9 @@ function ReportModal({ visible, report, t, unit, onClose, onSave, onConsolidate,
                   />
                 </View>
                 <Text style={[gs.cellLbl, { marginTop: 6, textAlign: "right" }]}>
-                  {report.traj.length} pts GPS · {toDist(report.dist || 0, unit)}
+                  {report.traj.length} pts GPS
+                  {report.osmAttempts != null && ` · 📡 ${report.osmAttempts} req. OSM`}
+                  {report.osmAttempts != null && report.osmFailures > 0 && ` · ${report.osmFailures} échecs`}
                 </Text>
               </View>
             ) : null;
@@ -740,47 +750,11 @@ function ReportModal({ visible, report, t, unit, onClose, onSave, onConsolidate,
           {/* Bloc 4 — Épisodes d'infractions groupés par limitation */}
           <InfractionGroups infractions={inf} unit={unit} ul={ul} t={t} toSpd={toSpd} fmtTime={fmtTime} fmtDur={fmtDur} />
 
-          {/* Stats réseau du polling temps réel (uniquement si pas encore consolidé) */}
-          {report.osmAttempts != null && !report.consolidatedDate && !isProcessing && (
-            <Text style={[gs.cellLbl, { textAlign: "center", marginBottom: 10 }]}>
-              📡 {report.osmAttempts} requêtes OSM · {report.osmFailures || 0} échecs
-            </Text>
-          )}
-
-          {isProcessing && (
+          {isProcessing && processingProgress?.total > 0 && (
             <View style={[gs.block, { backgroundColor: "rgba(14,165,233,.08)", marginBottom: 12 }]}>
               <Text style={{ fontSize: 12, color: C.blue, textAlign: "center", fontWeight: "700" }}>
-                ⏳ Consolidation en cours...
+                ⏳ Consolidation en cours... {processingProgress.done} / {processingProgress.total} points
               </Text>
-              {processingProgress && processingProgress.total > 0 && (
-                <Text style={{ fontSize: 12, color: C.blue, textAlign: "center", marginTop: 4 }}>
-                  {processingProgress.done} / {processingProgress.total} points
-                </Text>
-              )}
-            </View>
-          )}
-          {report.consolidatedDate && !isProcessing && (
-            <View style={[gs.block, { backgroundColor: "rgba(34,197,94,.08)", marginBottom: 12 }]}>
-              <Text style={{ fontSize: 11, color: "#22c55e", textAlign: "center" }}>
-                ✅ Consolidé à {new Date(report.consolidatedDate).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}
-              </Text>
-              {report.consolidationAttempts != null && (
-                <Text style={{ fontSize: 11, color: "#22c55e", textAlign: "center", marginTop: 2 }}>
-                  📡 {report.consolidationAttempts} requêtes OSM · {report.consolidationFailures || 0} échecs
-                </Text>
-              )}
-            </View>
-          )}
-          {isProcessing && (
-            <View style={[gs.block, { backgroundColor: "rgba(14,165,233,.08)", marginBottom: 12 }]}>
-              <Text style={{ fontSize: 12, color: C.blue, textAlign: "center", fontWeight: "700" }}>
-                ⏳ Consolidation en cours...
-              </Text>
-              {processingProgress && processingProgress.total > 0 && (
-                <Text style={{ fontSize: 12, color: C.blue, textAlign: "center", marginTop: 4 }}>
-                  {processingProgress.done} / {processingProgress.total} points
-                </Text>
-              )}
             </View>
           )}
           {onSave && (
