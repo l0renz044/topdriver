@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.28-RN";
+const APP_VERSION = "v6.30-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -861,7 +861,7 @@ function SaveFileModal({ visible, defaultName, onCancel, onConfirm }) {
 // ═══════════════════════════════════════
 // MODAL: SETTINGS
 // ═══════════════════════════════════════
-function SettingsModal({ visible, lang, setLang, unit, setUnit, bipEnabled, setBipEnabled, keepAwake, setKeepAwake, pollStable, setPollStable, pollModerate, setPollModerate, pollStrong, setPollStrong, t, onClose }) {
+function SettingsModal({ visible, lang, setLang, unit, setUnit, bipEnabled, setBipEnabled, keepAwake, setKeepAwake, pollUrban, setPollUrban, pollRoad, setPollRoad, t, onClose }) {
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
@@ -886,34 +886,32 @@ function SettingsModal({ visible, lang, setLang, unit, setUnit, bipEnabled, setB
           </SettingRow>
 
           <Text style={[gs.blockTitle, { marginTop: 20, marginBottom: 4 }]}>Fréquence d'interrogation OSM (secondes)</Text>
-          <Text style={[gs.cellLbl, { marginBottom: 10 }]}>Plus la valeur est basse, plus les changements de zone sont détectés rapidement, au prix de plus de requêtes réseau.</Text>
+          <Text style={[gs.cellLbl, { marginBottom: 10 }]}>Basée sur la limitation en cours. Minimum 2s.</Text>
 
           <View style={gs.settingRow}>
-            <Text style={gs.settingLbl}>Vitesse stable</Text>
+            <Text style={gs.settingLbl}>Zone urbaine (≤ 70 km/h)</Text>
             <TextInput
               style={gs.pollInput}
-              value={pollStable}
-              onChangeText={setPollStable}
-              keyboardType="number-pad"
-              maxLength={3}
-            />
-          </View>
-          <View style={gs.settingRow}>
-            <Text style={gs.settingLbl}>Vitesse modérée</Text>
-            <TextInput
-              style={gs.pollInput}
-              value={pollModerate}
-              onChangeText={setPollModerate}
+              value={pollUrban}
+              onChangeText={v => {
+                const n = parseInt(v, 10);
+                if (v === "") { setPollUrban(""); return; }
+                if (!isNaN(n)) setPollUrban(String(Math.max(2, n)));
+              }}
               keyboardType="number-pad"
               maxLength={3}
             />
           </View>
           <View style={[gs.settingRow, { borderBottomWidth: 0 }]}>
-            <Text style={gs.settingLbl}>Vitesse forte</Text>
+            <Text style={gs.settingLbl}>Route/Autoroute ({'>'} 70 km/h)</Text>
             <TextInput
               style={gs.pollInput}
-              value={pollStrong}
-              onChangeText={setPollStrong}
+              value={pollRoad}
+              onChangeText={v => {
+                const n = parseInt(v, 10);
+                if (v === "") { setPollRoad(""); return; }
+                if (!isNaN(n)) setPollRoad(String(Math.max(2, n)));
+              }}
               keyboardType="number-pad"
               maxLength={3}
             />
@@ -949,18 +947,17 @@ export default function App() {
   const [unit, setUnit] = useState("kmh");
   const [bipEnabled, setBipEnabled] = useState(true);
   const [keepAwake, setKeepAwake] = useState(true);
-  const [pollStable, setPollStable] = useState("15");
-  const [pollModerate, setPollModerate] = useState("5");
-  const [pollStrong, setPollStrong] = useState("2");
+  const [pollUrban, setPollUrban] = useState("5");   // limite OSM ≤ 70 km/h
+  const [pollRoad, setPollRoad] = useState("15");    // limite OSM > 70 km/h
   const settingsLoaded = useRef(false);
 
   // Sauvegarder les paramètres uniquement après le chargement initial
   useEffect(() => {
     if (!settingsLoaded.current) return;
     AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify({
-      lang, unit, bipEnabled, keepAwake, pollStable, pollModerate, pollStrong
+      lang, unit, bipEnabled, keepAwake, pollUrban, pollRoad
     }));
-  }, [lang, unit, bipEnabled, keepAwake, pollStable, pollModerate, pollStrong]);
+  }, [lang, unit, bipEnabled, keepAwake, pollUrban, pollRoad]);
   useKeepAwake(keepAwake && active ? "trip" : undefined);
   const t = T[lang];
 
@@ -1008,7 +1005,6 @@ export default function App() {
   const curEpRef = useRef(null);  // épisode en cours
   const lastFetch = useRef(0);
   const coolRef = useRef(0);
-  const prevSpd = useRef(0);
   const lastPosRef = useRef(null); // dernière position GPS reçue (pour calcul distance)
   const SETTINGS_KEY = "td_settings";
   const adaptRef = useRef(15000);
@@ -1045,9 +1041,8 @@ export default function App() {
           if (s.unit) setUnit(s.unit);
           if (s.bipEnabled !== undefined) setBipEnabled(s.bipEnabled);
           if (s.keepAwake !== undefined) setKeepAwake(s.keepAwake);
-          if (s.pollStable) setPollStable(s.pollStable);
-          if (s.pollModerate) setPollModerate(s.pollModerate);
-          if (s.pollStrong) setPollStrong(s.pollStrong);
+          if (s.pollUrban) setPollUrban(s.pollUrban);
+          if (s.pollRoad) setPollRoad(s.pollRoad);
         } catch {}
       }
       settingsLoaded.current = true;
@@ -1144,7 +1139,7 @@ export default function App() {
     setDist(0); distRef.current = 0;
     setEndTime(null); lastFetch.current = 0;
     coolRef.current = 0; setZoneCooldown(0);
-    prevSpd.current = 0; adaptRef.current = 15000;
+    adaptRef.current = 15000;
     lastPosRef.current = null;
     osmAttemptsRef.current = 0; osmFailuresRef.current = 0; setOsmStats({ attempts: 0, failures: 0 });
     currentConsolidated.current = null; setCurrentConsolidatedDate(null);
@@ -1232,11 +1227,13 @@ export default function App() {
         newPointAdded = true;
       }
 
-      const dSpd = Math.abs(spd - prevSpd.current); prevSpd.current = spd;
-      const sStable = Math.max(1, parseInt(pollStable, 10) || 15) * 1000;
-      const sModerate = Math.max(1, parseInt(pollModerate, 10) || 5) * 1000;
-      const sStrong = Math.max(1, parseInt(pollStrong, 10) || 2) * 1000;
-      adaptRef.current = dSpd > 15 ? sStrong : dSpd > 5 ? sModerate : sStable;
+      // Intervalle de polling basé sur la limite OSM courante :
+      // ≤ 70 km/h (zone urbaine/péri-urbaine) → polling rapide
+      // > 70 km/h (nationale/autoroute) → polling lent
+      const currentLimit = limRef.current.limit;
+      const urbanMs = Math.max(2, parseInt(pollUrban, 10) || 5) * 1000;
+      const roadMs = Math.max(2, parseInt(pollRoad, 10) || 15) * 1000;
+      adaptRef.current = currentLimit <= 70 ? urbanMs : roadMs;
 
       // Ne pas interroger OSM si aucun nouveau point de trajectoire n'a été retenu
       if (newPointAdded && now - lastFetch.current > adaptRef.current) {
@@ -1702,9 +1699,8 @@ export default function App() {
         unit={unit} setUnit={setUnit}
         bipEnabled={bipEnabled} setBipEnabled={setBipEnabled}
         keepAwake={keepAwake} setKeepAwake={setKeepAwake}
-        pollStable={pollStable} setPollStable={setPollStable}
-        pollModerate={pollModerate} setPollModerate={setPollModerate}
-        pollStrong={pollStrong} setPollStrong={setPollStrong}
+        pollUrban={pollUrban} setPollUrban={setPollUrban}
+        pollRoad={pollRoad} setPollRoad={setPollRoad}
         t={t}
         onClose={() => setShowSettings(false)}
       />
