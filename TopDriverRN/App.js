@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.32-RN";
+const APP_VERSION = "v6.33-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -370,9 +370,20 @@ async function fetchLimit(lat, lon, endpointGroups) {
     }
   };
 
+  // Promise.any n'est pas toujours disponible sur Hermes — implémentation manuelle
+  const raceGroup = (urls) => new Promise((resolve, reject) => {
+    let failures = 0;
+    if (urls.length === 0) { reject(new Error("empty group")); return; }
+    urls.forEach(url => {
+      tryUrl(url)
+        .then(resolve)
+        .catch(() => { failures++; if (failures === urls.length) reject(new Error("all failed")); });
+    });
+  });
+
   for (const group of groups) {
     try {
-      const result = await Promise.any(group.urls.map(url => tryUrl(url)));
+      const result = await raceGroup(group.urls);
       if (result) { cache.set(k, result); return result; }
     } catch { /* groupe entier échoué → suivant */ }
   }
