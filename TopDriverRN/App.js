@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.35.1DBG-RN";
+const APP_VERSION = "v6.38-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -332,21 +332,23 @@ async function fetchLimit(lat, lon, endpointGroups) {
   if (c && Date.now() - c.ts < 300000) return c;
   const q = `[out:json][timeout:10];way(around:50,${lat},${lon})[highway][highway!~"footway|path|steps|cycleway"];out tags 5;`;
 
-  // Construire les groupes : si endpointGroups fourni → race par rang
-  // sinon → liste séquentielle par défaut (un serveur par groupe)
-  const groups = (endpointGroups && endpointGroups.length > 0)
-    ? endpointGroups
-    : DEFAULT_OVERPASS_ENDPOINTS.map((url, i) => ({ rank: i + 1, urls: [url] }));
+  // Liste plate séquentielle — même comportement qu'avant les modifications
+  const urls = (endpointGroups && endpointGroups.length > 0)
+    ? endpointGroups.flatMap(g => g.urls)
+    : DEFAULT_OVERPASS_ENDPOINTS;
 
-  const tryUrl = (url, signal) => new Promise(async (resolve, reject) => {
+  for (const url of urls) {
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
       const r = await fetch(`${url}?data=${encodeURIComponent(q)}`, {
-        signal,
+        signal: controller.signal,
         headers: { "Accept": "application/json" },
       });
-      if (!r.ok) { reject(new Error(`HTTP ${r.status}`)); return; }
+      clearTimeout(timeoutId);
+      if (!r.ok) continue;
       const d = await r.json();
-      if (!d.elements?.length) { resolve({ limit: 50, src: "défaut", ts: Date.now() }); return; }
+      if (!d.elements?.length) return { limit: 50, src: "défaut" };
       const sorted = [...d.elements].sort((a, b) => {
         const ia = BP.indexOf(a.tags?.highway || "");
         const ib = BP.indexOf(b.tags?.highway || "");
@@ -356,48 +358,15 @@ async function fetchLimit(lat, lon, endpointGroups) {
         const v = parseMs(el.tags?.maxspeed);
         if (v) {
           const res = { limit: v, src: "OSM", road: el.tags?.name || el.tags?.ref || "", ts: Date.now() };
-          resolve(res); return;
+          cache.set(k, res); return res;
         }
       }
       const hw = sorted[0].tags?.highway || "";
       const urban = ["residential", "living_street", "service", "unclassified"].includes(hw);
-      resolve({ limit: (urban ? UL : DL)[hw] ?? 50, src: urban ? "agglo" : "défaut", road: sorted[0].tags?.name || "", ts: Date.now() });
-    } catch(e) {
-      console.warn(`Overpass ${url} failed:`, e.message);
-      reject(e);
-    }
-  });
-
-  for (const group of groups) {
-    // Pour chaque groupe : un AbortController partagé entre tous les serveurs du groupe
-    // Dès qu'un serveur répond avec succès → on annule les autres
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-    const result = await new Promise(resolve => {
-      let failures = 0;
-      const total = group.urls.length;
-      group.urls.forEach(url => {
-        tryUrl(url, controller.signal)
-          .then(res => {
-            clearTimeout(timeoutId);
-            controller.abort(); // annule les autres requêtes du groupe
-            resolve(res);
-          })
-          .catch(() => {
-            failures++;
-            if (failures === total) {
-              clearTimeout(timeoutId);
-              resolve(null); // tout le groupe a échoué
-            }
-          });
-      });
-    });
-
-    if (result) { cache.set(k, result); return result; }
-    // groupe échoué → on passe au suivant
+      const res = { limit: (urban ? UL : DL)[hw] ?? 50, src: urban ? "agglo" : "défaut", road: sorted[0].tags?.name || "", ts: Date.now() };
+      cache.set(k, res); return res;
+    } catch(e) { console.warn(`Overpass ${url} failed:`, e.message); continue; }
   }
-
   console.warn("All Overpass endpoints failed");
   return { limit: 50, src: "hors ligne" };
 }
