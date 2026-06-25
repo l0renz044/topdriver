@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.33-RN";
+const APP_VERSION = "v6.34-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -320,7 +320,13 @@ const cache = new Map();
 const DEFAULT_OVERPASS_ENDPOINTS = [
   "https://overpass.kumi.systems/api/interpreter",
   "https://overpass.private.coffee/api/interpreter",
-  "https://lz4.overpass-api.de/api/interpreter",
+];
+
+// Groupes séquentiels par défaut (utilisés quand osmEndpointsRef n'est pas dispo)
+const DEFAULT_OVERPASS_GROUPS = [
+  { rank: 1, urls: ["https://overpass.kumi.systems/api/interpreter"] },
+  { rank: 2, urls: ["https://overpass.private.coffee/api/interpreter"] },
+  { rank: 3, urls: ["https://lz4.overpass-api.de/api/interpreter"] },
 ];
 
 // fetchLimit reçoit des groupes [{rank, urls:[]}] triés par rang croissant.
@@ -334,11 +340,11 @@ async function fetchLimit(lat, lon, endpointGroups) {
 
   const groups = (endpointGroups && endpointGroups.length > 0)
     ? endpointGroups
-    : [{ rank: 1, urls: DEFAULT_OVERPASS_ENDPOINTS }];
+    : DEFAULT_OVERPASS_GROUPS;
 
   const tryUrl = async (url) => {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
     try {
       const r = await fetch(`${url}?data=${encodeURIComponent(q)}`, {
         signal: controller.signal, headers: { "Accept": "application/json" },
