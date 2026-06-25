@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.38-RN";
+const APP_VERSION = "v6.40-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -317,31 +317,24 @@ const UL = { motorway: 110, trunk: 90, primary: 50, secondary: 50, tertiary: 50,
 const BP = ["motorway", "trunk", "primary", "secondary", "tertiary", "motorway_link", "trunk_link", "primary_link", "secondary_link", "unclassified", "residential"];
 const parseMs = r => { if (!r) return null; const n = parseInt(r); if (!isNaN(n) && n > 0) return n; const sp = { "fr:urban": 50, "fr:rural": 80, "fr:motorway": 130, "walk": 20 }; return sp[r.trim().toLowerCase()] ?? null; };
 const cache = new Map();
-const DEFAULT_OVERPASS_ENDPOINTS = [
-  "https://overpass.private.coffee/api/interpreter",
+const OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
-  "https://lz4.overpass-api.de/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ];
 
-
-
-
-async function fetchLimit(lat, lon, endpointGroups) {
+async function fetchLimit(lat, lon, endpoints) {
+  const ep = (endpoints && endpoints.length > 0) ? endpoints : OVERPASS_ENDPOINTS;
   const k = `${lat.toFixed(4)},${lon.toFixed(4)}`;
   const c = cache.get(k);
   if (c && Date.now() - c.ts < 300000) return c;
   const q = `[out:json][timeout:10];way(around:50,${lat},${lon})[highway][highway!~"footway|path|steps|cycleway"];out tags 5;`;
 
-  // Liste plate séquentielle — même comportement qu'avant les modifications
-  const urls = (endpointGroups && endpointGroups.length > 0)
-    ? endpointGroups.flatMap(g => g.urls)
-    : DEFAULT_OVERPASS_ENDPOINTS;
-
-  for (const url of urls) {
+  for (const endpoint of ep) {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
-      const r = await fetch(`${url}?data=${encodeURIComponent(q)}`, {
+      const r = await fetch(`${endpoint}?data=${encodeURIComponent(q)}`, {
         signal: controller.signal,
         headers: { "Accept": "application/json" },
       });
@@ -365,7 +358,7 @@ async function fetchLimit(lat, lon, endpointGroups) {
       const urban = ["residential", "living_street", "service", "unclassified"].includes(hw);
       const res = { limit: (urban ? UL : DL)[hw] ?? 50, src: urban ? "agglo" : "défaut", road: sorted[0].tags?.name || "", ts: Date.now() };
       cache.set(k, res); return res;
-    } catch(e) { console.warn(`Overpass ${url} failed:`, e.message); continue; }
+    } catch(e) { console.warn(`Overpass ${endpoint} failed:`, e.message); continue; }
   }
   console.warn("All Overpass endpoints failed");
   return { limit: 50, src: "hors ligne" };
@@ -869,14 +862,67 @@ function SaveFileModal({ visible, defaultName, onCancel, onConfirm }) {
 // ═══════════════════════════════════════
 // MODAL: SETTINGS
 // ═══════════════════════════════════════
-function SettingsModal({ visible, lang, setLang, unit, setUnit, bipEnabled, setBipEnabled, keepAwake, setKeepAwake, pollUrban, setPollUrban, pollRoad, setPollRoad, osmRankKumi, setOsmRankKumi, osmRankPrivate, setOsmRankPrivate, osmRankLz4, setOsmRankLz4, osmCustomUrl, setOsmCustomUrl, osmCustomRank, setOsmCustomRank, t, onClose }) {
-  const [showAdvanced, setShowAdvanced] = useState(false);
+function OsmServerRow({ label, url, setUrl, rank, setRank }) {
+  const [testStatus, setTestStatus] = useState(null); // null | "testing" | "ok" | "fail"
 
-  const osmServers = [
-    { label: "kumi.systems", url: "overpass.kumi.systems", rank: osmRankKumi, setRank: setOsmRankKumi },
-    { label: "private.coffee", url: "overpass.private.coffee", rank: osmRankPrivate, setRank: setOsmRankPrivate },
-    { label: "lz4.overpass-api.de", url: "lz4.overpass-api.de", rank: osmRankLz4, setRank: setOsmRankLz4 },
-  ];
+  const testServer = async () => {
+    if (!url.trim()) return;
+    setTestStatus("testing");
+    try {
+      const q = `[out:json][timeout:5];way(around:50,48.8566,2.3522)[highway];out tags 1;`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const r = await fetch(`${url.trim()}?data=${encodeURIComponent(q)}`, {
+        signal: controller.signal,
+        headers: { "Accept": "application/json" },
+      });
+      clearTimeout(timeoutId);
+      setTestStatus(r.ok ? "ok" : "fail");
+    } catch { setTestStatus("fail"); }
+  };
+
+  return (
+    <View style={{ marginBottom: 12, backgroundColor: C.surface2, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: C.border }}>
+      <Text style={[gs.settingLbl, { marginBottom: 6 }]}>{label}</Text>
+      <TextInput
+        style={[gs.pollInput, { flex: 1, width: "100%", textAlign: "left", paddingHorizontal: 10, fontSize: 11, marginBottom: 8 }]}
+        value={url}
+        onChangeText={v => { setUrl(v); setTestStatus(null); }}
+        placeholder="https://..."
+        placeholderTextColor={C.muted}
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="url"
+      />
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+        <Text style={[gs.settingLbl, { marginBottom: 0 }]}>Rang :</Text>
+        <TextInput
+          style={[gs.pollInput, { width: 48 }]}
+          value={rank}
+          onChangeText={v => { const n = parseInt(v, 10); if (v === "") { setRank(""); return; } if (!isNaN(n) && n > 0) setRank(String(n)); }}
+          keyboardType="number-pad"
+          maxLength={1}
+          placeholder="—"
+          placeholderTextColor={C.muted}
+        />
+        <TouchableOpacity
+          style={{ backgroundColor: C.blue, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12 }}
+          onPress={testServer}
+          disabled={testStatus === "testing"}
+        >
+          <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>
+            {testStatus === "testing" ? "⏳" : "Tester"}
+          </Text>
+        </TouchableOpacity>
+        {testStatus === "ok" && <Text style={{ color: "#22c55e", fontWeight: "700" }}>✅ OK</Text>}
+        {testStatus === "fail" && <Text style={{ color: C.red, fontWeight: "700" }}>❌ Échec</Text>}
+      </View>
+    </View>
+  );
+}
+
+function SettingsModal({ visible, lang, setLang, unit, setUnit, bipEnabled, setBipEnabled, keepAwake, setKeepAwake, pollUrban, setPollUrban, pollRoad, setPollRoad, osmServer1Url, setOsmServer1Url, osmServer1Rank, setOsmServer1Rank, osmServer2Url, setOsmServer2Url, osmServer2Rank, setOsmServer2Rank, osmServer3Url, setOsmServer3Url, osmServer3Rank, setOsmServer3Rank, t, onClose }) {
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
@@ -914,16 +960,16 @@ function SettingsModal({ visible, lang, setLang, unit, setUnit, bipEnabled, setB
 
           {showAdvanced && (
             <>
-              {/* Fréquence de polling OSM */}
-              <Text style={[gs.cellLbl, { marginBottom: 8 }]}>Fréquence d'interrogation OSM (secondes, min. 2s)</Text>
+              {/* Fréquence OSM */}
+              <Text style={[gs.cellLbl, { marginBottom: 4 }]}>Fréquence d'interrogation OSM (secondes, min. 2s)</Text>
+              <Text style={[gs.cellLbl, { marginBottom: 10, fontSize: 11 }]}>Basée sur la limitation OSM en cours.</Text>
               <View style={gs.settingRow}>
                 <Text style={gs.settingLbl}>Zone urbaine (≤ 70 km/h)</Text>
                 <TextInput
                   style={gs.pollInput}
                   value={pollUrban}
                   onChangeText={v => { const n = parseInt(v, 10); if (v === "") { setPollUrban(""); return; } if (!isNaN(n)) setPollUrban(String(Math.max(2, n))); }}
-                  keyboardType="number-pad"
-                  maxLength={3}
+                  keyboardType="number-pad" maxLength={3}
                 />
               </View>
               <View style={[gs.settingRow, { marginBottom: 20 }]}>
@@ -932,57 +978,18 @@ function SettingsModal({ visible, lang, setLang, unit, setUnit, bipEnabled, setB
                   style={gs.pollInput}
                   value={pollRoad}
                   onChangeText={v => { const n = parseInt(v, 10); if (v === "") { setPollRoad(""); return; } if (!isNaN(n)) setPollRoad(String(Math.max(2, n))); }}
-                  keyboardType="number-pad"
-                  maxLength={3}
+                  keyboardType="number-pad" maxLength={3}
                 />
               </View>
 
               {/* Serveurs OSM */}
-              <Text style={[gs.cellLbl, { marginBottom: 4 }]}>Serveurs OSM — ordre d'interrogation</Text>
-              <Text style={[gs.cellLbl, { marginBottom: 12, fontSize: 11 }]}>Rang vide = serveur désactivé. Interrogation dans l'ordre croissant des rangs.</Text>
-
-              {osmServers.map(srv => (
-                <View key={srv.url} style={[gs.settingRow, { alignItems: "center" }]}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={gs.settingLbl}>{srv.label}</Text>
-                  </View>
-                  <TextInput
-                    style={[gs.pollInput, { width: 48 }]}
-                    value={srv.rank}
-                    onChangeText={v => { const n = parseInt(v, 10); if (v === "") { srv.setRank(""); return; } if (!isNaN(n) && n > 0) srv.setRank(String(n)); }}
-                    keyboardType="number-pad"
-                    maxLength={1}
-                    placeholder="—"
-                    placeholderTextColor={C.muted}
-                  />
-                </View>
-              ))}
-
-              {/* Serveur custom */}
-              <View style={[gs.settingRow, { flexDirection: "column", alignItems: "flex-start", gap: 8, paddingVertical: 12 }]}>
-                <Text style={gs.settingLbl}>Serveur personnalisé</Text>
-                <View style={{ flexDirection: "row", gap: 8, width: "100%", alignItems: "center" }}>
-                  <TextInput
-                    style={[gs.pollInput, { flex: 1, width: "auto", textAlign: "left", paddingHorizontal: 10, fontSize: 12 }]}
-                    value={osmCustomUrl}
-                    onChangeText={setOsmCustomUrl}
-                    placeholder="https://mon-serveur.com/api/interpreter"
-                    placeholderTextColor={C.muted}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    keyboardType="url"
-                  />
-                  <TextInput
-                    style={[gs.pollInput, { width: 48 }]}
-                    value={osmCustomRank}
-                    onChangeText={v => { const n = parseInt(v, 10); if (v === "") { setOsmCustomRank(""); return; } if (!isNaN(n) && n > 0) setOsmCustomRank(String(n)); }}
-                    keyboardType="number-pad"
-                    maxLength={1}
-                    placeholder="—"
-                    placeholderTextColor={C.muted}
-                  />
-                </View>
-              </View>
+              <Text style={[gs.blockTitle, { marginBottom: 4 }]}>Serveurs OSM</Text>
+              <Text style={[gs.cellLbl, { marginBottom: 12, fontSize: 11 }]}>
+                Interrogés dans l'ordre du rang (croissant). Rang vide = désactivé.
+              </Text>
+              <OsmServerRow label="Serveur 1" url={osmServer1Url} setUrl={setOsmServer1Url} rank={osmServer1Rank} setRank={setOsmServer1Rank} />
+              <OsmServerRow label="Serveur 2" url={osmServer2Url} setUrl={setOsmServer2Url} rank={osmServer2Rank} setRank={setOsmServer2Rank} />
+              <OsmServerRow label="Serveur 3" url={osmServer3Url} setUrl={setOsmServer3Url} rank={osmServer3Rank} setRank={setOsmServer3Rank} />
             </>
           )}
         </ScrollView>
@@ -1018,22 +1025,39 @@ export default function App() {
   const [keepAwake, setKeepAwake] = useState(true);
   const [pollUrban, setPollUrban] = useState("5");
   const [pollRoad, setPollRoad] = useState("15");
-  // Serveurs OSM : rang = ordre d'interrogation (vide = désactivé)
-  const [osmRankKumi, setOsmRankKumi] = useState("2");
-  const [osmRankPrivate, setOsmRankPrivate] = useState("1");
-  const [osmRankLz4, setOsmRankLz4] = useState("");
-  const [osmCustomUrl, setOsmCustomUrl] = useState("");
-  const [osmCustomRank, setOsmCustomRank] = useState("");
+  // Serveurs OSM configurables (url + rang, vide = désactivé)
+  const [osmServer1Url, setOsmServer1Url] = useState("https://overpass-api.de/api/interpreter");
+  const [osmServer1Rank, setOsmServer1Rank] = useState("1");
+  const [osmServer2Url, setOsmServer2Url] = useState("https://overpass.kumi.systems/api/interpreter");
+  const [osmServer2Rank, setOsmServer2Rank] = useState("2");
+  const [osmServer3Url, setOsmServer3Url] = useState("https://maps.mail.ru/osm/tools/overpass/api/interpreter");
+  const [osmServer3Rank, setOsmServer3Rank] = useState("3");
   const settingsLoaded = useRef(false);
+
+  // Liste ordonnée des endpoints actifs (recalculée à chaque changement de config)
+  const osmEndpointsRef = useRef(OVERPASS_ENDPOINTS);
+  useEffect(() => {
+    const servers = [
+      { url: osmServer1Url, rank: osmServer1Rank },
+      { url: osmServer2Url, rank: osmServer2Rank },
+      { url: osmServer3Url, rank: osmServer3Rank },
+    ];
+    const active = servers
+      .filter(s => s.url.trim() && s.rank !== "" && !isNaN(parseInt(s.rank, 10)))
+      .sort((a, b) => parseInt(a.rank, 10) - parseInt(b.rank, 10))
+      .map(s => s.url.trim());
+    osmEndpointsRef.current = active.length > 0 ? active : OVERPASS_ENDPOINTS;
+  }, [osmServer1Url, osmServer1Rank, osmServer2Url, osmServer2Rank, osmServer3Url, osmServer3Rank]);
 
   // Sauvegarder les paramètres uniquement après le chargement initial
   useEffect(() => {
     if (!settingsLoaded.current) return;
     AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify({
       lang, unit, bipEnabled, keepAwake, pollUrban, pollRoad,
-      osmRankKumi, osmRankPrivate, osmRankLz4, osmCustomUrl, osmCustomRank
+      osmServer1Url, osmServer1Rank, osmServer2Url, osmServer2Rank, osmServer3Url, osmServer3Rank,
     }));
-  }, [lang, unit, bipEnabled, keepAwake, pollUrban, pollRoad, osmRankKumi, osmRankPrivate, osmRankLz4, osmCustomUrl, osmCustomRank]);
+  }, [lang, unit, bipEnabled, keepAwake, pollUrban, pollRoad,
+      osmServer1Url, osmServer1Rank, osmServer2Url, osmServer2Rank, osmServer3Url, osmServer3Rank]);
   useKeepAwake(keepAwake && active ? "trip" : undefined);
   const t = T[lang];
 
@@ -1091,42 +1115,11 @@ export default function App() {
   const lastOsm = useRef(50);
   const distRef = useRef(0);
   const bipRef = useRef(true);
-  const osmEndpointsRef = useRef([
-    { rank: 1, urls: ["https://overpass.private.coffee/api/interpreter"] },
-    { rank: 2, urls: ["https://overpass.kumi.systems/api/interpreter"] },
-  ]);
 
   useEffect(() => { activeRef.current = active; }, [active]);
   useEffect(() => { limRef.current = limitInfo; }, [limitInfo]);
   useEffect(() => { coolRef.current = zoneCooldown; }, [zoneCooldown]);
   useEffect(() => { bipRef.current = bipEnabled; }, [bipEnabled]);
-
-  // Recalculer les groupes de serveurs OSM par rang à chaque changement
-  useEffect(() => {
-    const candidates = [
-      { url: "https://overpass.kumi.systems/api/interpreter", rank: osmRankKumi },
-      { url: "https://overpass.private.coffee/api/interpreter", rank: osmRankPrivate },
-      { url: "https://lz4.overpass-api.de/api/interpreter", rank: osmRankLz4 },
-    ];
-    if (osmCustomUrl && osmCustomRank !== "") {
-      candidates.push({ url: osmCustomUrl, rank: osmCustomRank });
-    }
-    // Filtrer les serveurs actifs (rang renseigné et valide)
-    const active = candidates.filter(c => c.rank !== "" && !isNaN(parseInt(c.rank, 10)));
-    // Regrouper par rang
-    const rankMap = {};
-    active.forEach(c => {
-      const r = parseInt(c.rank, 10);
-      if (!rankMap[r]) rankMap[r] = [];
-      rankMap[r].push(c.url);
-    });
-    // Trier par rang croissant et construire les groupes
-    const groups = Object.keys(rankMap)
-      .map(Number)
-      .sort((a, b) => a - b)
-      .map(r => ({ rank: r, urls: rankMap[r] }));
-    osmEndpointsRef.current = groups.length > 0 ? groups : [];
-  }, [osmRankKumi, osmRankPrivate, osmRankLz4, osmCustomUrl, osmCustomRank]);
 
   useEffect(() => {
     loadReps().then(setReports);
@@ -1150,11 +1143,12 @@ export default function App() {
           if (s.keepAwake !== undefined) setKeepAwake(s.keepAwake);
           if (s.pollUrban) setPollUrban(s.pollUrban);
           if (s.pollRoad) setPollRoad(s.pollRoad);
-          if (s.osmRankKumi !== undefined) setOsmRankKumi(s.osmRankKumi);
-          if (s.osmRankPrivate !== undefined) setOsmRankPrivate(s.osmRankPrivate);
-          if (s.osmRankLz4 !== undefined) setOsmRankLz4(s.osmRankLz4);
-          if (s.osmCustomUrl !== undefined) setOsmCustomUrl(s.osmCustomUrl);
-          if (s.osmCustomRank !== undefined) setOsmCustomRank(s.osmCustomRank);
+          if (s.osmServer1Url) setOsmServer1Url(s.osmServer1Url);
+          if (s.osmServer1Rank !== undefined) setOsmServer1Rank(s.osmServer1Rank);
+          if (s.osmServer2Url) setOsmServer2Url(s.osmServer2Url);
+          if (s.osmServer2Rank !== undefined) setOsmServer2Rank(s.osmServer2Rank);
+          if (s.osmServer3Url) setOsmServer3Url(s.osmServer3Url);
+          if (s.osmServer3Rank !== undefined) setOsmServer3Rank(s.osmServer3Rank);
         } catch {}
       }
       settingsLoaded.current = true;
@@ -1813,11 +1807,12 @@ export default function App() {
         keepAwake={keepAwake} setKeepAwake={setKeepAwake}
         pollUrban={pollUrban} setPollUrban={setPollUrban}
         pollRoad={pollRoad} setPollRoad={setPollRoad}
-        osmRankKumi={osmRankKumi} setOsmRankKumi={setOsmRankKumi}
-        osmRankPrivate={osmRankPrivate} setOsmRankPrivate={setOsmRankPrivate}
-        osmRankLz4={osmRankLz4} setOsmRankLz4={setOsmRankLz4}
-        osmCustomUrl={osmCustomUrl} setOsmCustomUrl={setOsmCustomUrl}
-        osmCustomRank={osmCustomRank} setOsmCustomRank={setOsmCustomRank}
+        osmServer1Url={osmServer1Url} setOsmServer1Url={setOsmServer1Url}
+        osmServer1Rank={osmServer1Rank} setOsmServer1Rank={setOsmServer1Rank}
+        osmServer2Url={osmServer2Url} setOsmServer2Url={setOsmServer2Url}
+        osmServer2Rank={osmServer2Rank} setOsmServer2Rank={setOsmServer2Rank}
+        osmServer3Url={osmServer3Url} setOsmServer3Url={setOsmServer3Url}
+        osmServer3Rank={osmServer3Rank} setOsmServer3Rank={setOsmServer3Rank}
         t={t}
         onClose={() => setShowSettings(false)}
       />
