@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.30-RN";
+const APP_VERSION = "v6.32-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -317,30 +317,36 @@ const UL = { motorway: 110, trunk: 90, primary: 50, secondary: 50, tertiary: 50,
 const BP = ["motorway", "trunk", "primary", "secondary", "tertiary", "motorway_link", "trunk_link", "primary_link", "secondary_link", "unclassified", "residential"];
 const parseMs = r => { if (!r) return null; const n = parseInt(r); if (!isNaN(n) && n > 0) return n; const sp = { "fr:urban": 50, "fr:rural": 80, "fr:motorway": 130, "walk": 20 }; return sp[r.trim().toLowerCase()] ?? null; };
 const cache = new Map();
-const OVERPASS_ENDPOINTS = [
-  "https://overpass-api.de/api/interpreter",
+const DEFAULT_OVERPASS_ENDPOINTS = [
   "https://overpass.kumi.systems/api/interpreter",
-  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+  "https://lz4.overpass-api.de/api/interpreter",
 ];
 
-async function fetchLimit(lat, lon) {
+// fetchLimit reçoit des groupes [{rank, urls:[]}] triés par rang croissant.
+// Pour chaque groupe : race (Promise.any) entre tous les serveurs du groupe.
+// Si un groupe échoue entièrement → groupe suivant.
+async function fetchLimit(lat, lon, endpointGroups) {
   const k = `${lat.toFixed(4)},${lon.toFixed(4)}`;
   const c = cache.get(k);
   if (c && Date.now() - c.ts < 300000) return c;
   const q = `[out:json][timeout:10];way(around:50,${lat},${lon})[highway][highway!~"footway|path|steps|cycleway"];out tags 5;`;
 
-  for (const endpoint of OVERPASS_ENDPOINTS) {
+  const groups = (endpointGroups && endpointGroups.length > 0)
+    ? endpointGroups
+    : [{ rank: 1, urls: DEFAULT_OVERPASS_ENDPOINTS }];
+
+  const tryUrl = async (url) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
-      const r = await fetch(`${endpoint}?data=${encodeURIComponent(q)}`, {
-        signal: controller.signal,
-        headers: { "Accept": "application/json" },
+      const r = await fetch(`${url}?data=${encodeURIComponent(q)}`, {
+        signal: controller.signal, headers: { "Accept": "application/json" },
       });
       clearTimeout(timeoutId);
-      if (!r.ok) continue;
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
-      if (!d.elements?.length) return { limit: 50, src: "défaut" };
+      if (!d.elements?.length) return { limit: 50, src: "défaut", ts: Date.now() };
       const sorted = [...d.elements].sort((a, b) => {
         const ia = BP.indexOf(a.tags?.highway || "");
         const ib = BP.indexOf(b.tags?.highway || "");
@@ -357,9 +363,21 @@ async function fetchLimit(lat, lon) {
       const urban = ["residential", "living_street", "service", "unclassified"].includes(hw);
       const res = { limit: (urban ? UL : DL)[hw] ?? 50, src: urban ? "agglo" : "défaut", road: sorted[0].tags?.name || "", ts: Date.now() };
       cache.set(k, res); return res;
-    } catch(e) { console.warn(`Overpass ${endpoint} failed:`, e.message); continue; }
+    } catch(e) {
+      clearTimeout(timeoutId);
+      console.warn(`Overpass ${url} failed:`, e.message);
+      throw e;
+    }
+  };
+
+  for (const group of groups) {
+    try {
+      const result = await Promise.any(group.urls.map(url => tryUrl(url)));
+      if (result) { cache.set(k, result); return result; }
+    } catch { /* groupe entier échoué → suivant */ }
   }
-  console.warn("All Overpass endpoints failed");
+
+  console.warn("All Overpass endpoint groups failed");
   return { limit: 50, src: "hors ligne" };
 }
 
@@ -861,7 +879,15 @@ function SaveFileModal({ visible, defaultName, onCancel, onConfirm }) {
 // ═══════════════════════════════════════
 // MODAL: SETTINGS
 // ═══════════════════════════════════════
-function SettingsModal({ visible, lang, setLang, unit, setUnit, bipEnabled, setBipEnabled, keepAwake, setKeepAwake, pollUrban, setPollUrban, pollRoad, setPollRoad, t, onClose }) {
+function SettingsModal({ visible, lang, setLang, unit, setUnit, bipEnabled, setBipEnabled, keepAwake, setKeepAwake, pollUrban, setPollUrban, pollRoad, setPollRoad, osmRankKumi, setOsmRankKumi, osmRankPrivate, setOsmRankPrivate, osmRankLz4, setOsmRankLz4, osmCustomUrl, setOsmCustomUrl, osmCustomRank, setOsmCustomRank, t, onClose }) {
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const osmServers = [
+    { label: "kumi.systems", url: "overpass.kumi.systems", rank: osmRankKumi, setRank: setOsmRankKumi },
+    { label: "private.coffee", url: "overpass.private.coffee", rank: osmRankPrivate, setRank: setOsmRankPrivate },
+    { label: "lz4.overpass-api.de", url: "lz4.overpass-api.de", rank: osmRankLz4, setRank: setOsmRankLz4 },
+  ];
+
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
       <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
@@ -872,6 +898,8 @@ function SettingsModal({ visible, lang, setLang, unit, setUnit, bipEnabled, setB
           </TouchableOpacity>
         </View>
         <ScrollView contentContainerStyle={{ padding: 20 }}>
+
+          {/* ── Paramètres généraux ── */}
           <SettingRow label={t.language}>
             <ToggleGroup options={[{ v: "fr", l: "FR" }, { v: "en", l: "EN" }]} value={lang} onChange={setLang} />
           </SettingRow>
@@ -885,37 +913,88 @@ function SettingsModal({ visible, lang, setLang, unit, setUnit, bipEnabled, setB
             <ToggleGroup options={[{ v: true, l: t.keepAwakeOn }, { v: false, l: t.keepAwakeOff }]} value={keepAwake} onChange={setKeepAwake} />
           </SettingRow>
 
-          <Text style={[gs.blockTitle, { marginTop: 20, marginBottom: 4 }]}>Fréquence d'interrogation OSM (secondes)</Text>
-          <Text style={[gs.cellLbl, { marginBottom: 10 }]}>Basée sur la limitation en cours. Minimum 2s.</Text>
+          {/* ── Paramètres avancés ── */}
+          <TouchableOpacity
+            style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 24, marginBottom: 12 }}
+            onPress={() => setShowAdvanced(v => !v)}
+          >
+            <Text style={gs.blockTitle}>⚙️ Paramètres avancés</Text>
+            <Text style={{ fontSize: 18, color: C.muted }}>{showAdvanced ? "▲" : "▼"}</Text>
+          </TouchableOpacity>
 
-          <View style={gs.settingRow}>
-            <Text style={gs.settingLbl}>Zone urbaine (≤ 70 km/h)</Text>
-            <TextInput
-              style={gs.pollInput}
-              value={pollUrban}
-              onChangeText={v => {
-                const n = parseInt(v, 10);
-                if (v === "") { setPollUrban(""); return; }
-                if (!isNaN(n)) setPollUrban(String(Math.max(2, n)));
-              }}
-              keyboardType="number-pad"
-              maxLength={3}
-            />
-          </View>
-          <View style={[gs.settingRow, { borderBottomWidth: 0 }]}>
-            <Text style={gs.settingLbl}>Route/Autoroute ({'>'} 70 km/h)</Text>
-            <TextInput
-              style={gs.pollInput}
-              value={pollRoad}
-              onChangeText={v => {
-                const n = parseInt(v, 10);
-                if (v === "") { setPollRoad(""); return; }
-                if (!isNaN(n)) setPollRoad(String(Math.max(2, n)));
-              }}
-              keyboardType="number-pad"
-              maxLength={3}
-            />
-          </View>
+          {showAdvanced && (
+            <>
+              {/* Fréquence de polling OSM */}
+              <Text style={[gs.cellLbl, { marginBottom: 8 }]}>Fréquence d'interrogation OSM (secondes, min. 2s)</Text>
+              <View style={gs.settingRow}>
+                <Text style={gs.settingLbl}>Zone urbaine (≤ 70 km/h)</Text>
+                <TextInput
+                  style={gs.pollInput}
+                  value={pollUrban}
+                  onChangeText={v => { const n = parseInt(v, 10); if (v === "") { setPollUrban(""); return; } if (!isNaN(n)) setPollUrban(String(Math.max(2, n))); }}
+                  keyboardType="number-pad"
+                  maxLength={3}
+                />
+              </View>
+              <View style={[gs.settingRow, { marginBottom: 20 }]}>
+                <Text style={gs.settingLbl}>Route/Autoroute ({'>'} 70 km/h)</Text>
+                <TextInput
+                  style={gs.pollInput}
+                  value={pollRoad}
+                  onChangeText={v => { const n = parseInt(v, 10); if (v === "") { setPollRoad(""); return; } if (!isNaN(n)) setPollRoad(String(Math.max(2, n))); }}
+                  keyboardType="number-pad"
+                  maxLength={3}
+                />
+              </View>
+
+              {/* Serveurs OSM */}
+              <Text style={[gs.cellLbl, { marginBottom: 4 }]}>Serveurs OSM — ordre d'interrogation</Text>
+              <Text style={[gs.cellLbl, { marginBottom: 12, fontSize: 11 }]}>Rang vide = serveur désactivé. Interrogation dans l'ordre croissant des rangs.</Text>
+
+              {osmServers.map(srv => (
+                <View key={srv.url} style={[gs.settingRow, { alignItems: "center" }]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={gs.settingLbl}>{srv.label}</Text>
+                  </View>
+                  <TextInput
+                    style={[gs.pollInput, { width: 48 }]}
+                    value={srv.rank}
+                    onChangeText={v => { const n = parseInt(v, 10); if (v === "") { srv.setRank(""); return; } if (!isNaN(n) && n > 0) srv.setRank(String(n)); }}
+                    keyboardType="number-pad"
+                    maxLength={1}
+                    placeholder="—"
+                    placeholderTextColor={C.muted}
+                  />
+                </View>
+              ))}
+
+              {/* Serveur custom */}
+              <View style={[gs.settingRow, { flexDirection: "column", alignItems: "flex-start", gap: 8, paddingVertical: 12 }]}>
+                <Text style={gs.settingLbl}>Serveur personnalisé</Text>
+                <View style={{ flexDirection: "row", gap: 8, width: "100%", alignItems: "center" }}>
+                  <TextInput
+                    style={[gs.pollInput, { flex: 1, width: "auto", textAlign: "left", paddingHorizontal: 10, fontSize: 12 }]}
+                    value={osmCustomUrl}
+                    onChangeText={setOsmCustomUrl}
+                    placeholder="https://mon-serveur.com/api/interpreter"
+                    placeholderTextColor={C.muted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="url"
+                  />
+                  <TextInput
+                    style={[gs.pollInput, { width: 48 }]}
+                    value={osmCustomRank}
+                    onChangeText={v => { const n = parseInt(v, 10); if (v === "") { setOsmCustomRank(""); return; } if (!isNaN(n) && n > 0) setOsmCustomRank(String(n)); }}
+                    keyboardType="number-pad"
+                    maxLength={1}
+                    placeholder="—"
+                    placeholderTextColor={C.muted}
+                  />
+                </View>
+              </View>
+            </>
+          )}
         </ScrollView>
       </SafeAreaView>
     </Modal>
@@ -947,17 +1026,24 @@ export default function App() {
   const [unit, setUnit] = useState("kmh");
   const [bipEnabled, setBipEnabled] = useState(true);
   const [keepAwake, setKeepAwake] = useState(true);
-  const [pollUrban, setPollUrban] = useState("5");   // limite OSM ≤ 70 km/h
-  const [pollRoad, setPollRoad] = useState("15");    // limite OSM > 70 km/h
+  const [pollUrban, setPollUrban] = useState("5");
+  const [pollRoad, setPollRoad] = useState("15");
+  // Serveurs OSM : rang = ordre d'interrogation (vide = désactivé)
+  const [osmRankKumi, setOsmRankKumi] = useState("1");
+  const [osmRankPrivate, setOsmRankPrivate] = useState("2");
+  const [osmRankLz4, setOsmRankLz4] = useState("3");
+  const [osmCustomUrl, setOsmCustomUrl] = useState("");
+  const [osmCustomRank, setOsmCustomRank] = useState("");
   const settingsLoaded = useRef(false);
 
   // Sauvegarder les paramètres uniquement après le chargement initial
   useEffect(() => {
     if (!settingsLoaded.current) return;
     AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify({
-      lang, unit, bipEnabled, keepAwake, pollUrban, pollRoad
+      lang, unit, bipEnabled, keepAwake, pollUrban, pollRoad,
+      osmRankKumi, osmRankPrivate, osmRankLz4, osmCustomUrl, osmCustomRank
     }));
-  }, [lang, unit, bipEnabled, keepAwake, pollUrban, pollRoad]);
+  }, [lang, unit, bipEnabled, keepAwake, pollUrban, pollRoad, osmRankKumi, osmRankPrivate, osmRankLz4, osmCustomUrl, osmCustomRank]);
   useKeepAwake(keepAwake && active ? "trip" : undefined);
   const t = T[lang];
 
@@ -1015,11 +1101,43 @@ export default function App() {
   const lastOsm = useRef(50);
   const distRef = useRef(0);
   const bipRef = useRef(true);
+  const osmEndpointsRef = useRef([
+    { rank: 1, urls: ["https://overpass.kumi.systems/api/interpreter"] },
+    { rank: 2, urls: ["https://overpass.private.coffee/api/interpreter"] },
+    { rank: 3, urls: ["https://lz4.overpass-api.de/api/interpreter"] },
+  ]);
 
   useEffect(() => { activeRef.current = active; }, [active]);
   useEffect(() => { limRef.current = limitInfo; }, [limitInfo]);
   useEffect(() => { coolRef.current = zoneCooldown; }, [zoneCooldown]);
   useEffect(() => { bipRef.current = bipEnabled; }, [bipEnabled]);
+
+  // Recalculer les groupes de serveurs OSM par rang à chaque changement
+  useEffect(() => {
+    const candidates = [
+      { url: "https://overpass.kumi.systems/api/interpreter", rank: osmRankKumi },
+      { url: "https://overpass.private.coffee/api/interpreter", rank: osmRankPrivate },
+      { url: "https://lz4.overpass-api.de/api/interpreter", rank: osmRankLz4 },
+    ];
+    if (osmCustomUrl && osmCustomRank !== "") {
+      candidates.push({ url: osmCustomUrl, rank: osmCustomRank });
+    }
+    // Filtrer les serveurs actifs (rang renseigné et valide)
+    const active = candidates.filter(c => c.rank !== "" && !isNaN(parseInt(c.rank, 10)));
+    // Regrouper par rang
+    const rankMap = {};
+    active.forEach(c => {
+      const r = parseInt(c.rank, 10);
+      if (!rankMap[r]) rankMap[r] = [];
+      rankMap[r].push(c.url);
+    });
+    // Trier par rang croissant et construire les groupes
+    const groups = Object.keys(rankMap)
+      .map(Number)
+      .sort((a, b) => a - b)
+      .map(r => ({ rank: r, urls: rankMap[r] }));
+    osmEndpointsRef.current = groups.length > 0 ? groups : [];
+  }, [osmRankKumi, osmRankPrivate, osmRankLz4, osmCustomUrl, osmCustomRank]);
 
   useEffect(() => {
     loadReps().then(setReports);
@@ -1043,6 +1161,11 @@ export default function App() {
           if (s.keepAwake !== undefined) setKeepAwake(s.keepAwake);
           if (s.pollUrban) setPollUrban(s.pollUrban);
           if (s.pollRoad) setPollRoad(s.pollRoad);
+          if (s.osmRankKumi !== undefined) setOsmRankKumi(s.osmRankKumi);
+          if (s.osmRankPrivate !== undefined) setOsmRankPrivate(s.osmRankPrivate);
+          if (s.osmRankLz4 !== undefined) setOsmRankLz4(s.osmRankLz4);
+          if (s.osmCustomUrl !== undefined) setOsmCustomUrl(s.osmCustomUrl);
+          if (s.osmCustomRank !== undefined) setOsmCustomRank(s.osmCustomRank);
         } catch {}
       }
       settingsLoaded.current = true;
@@ -1239,7 +1362,7 @@ export default function App() {
       if (newPointAdded && now - lastFetch.current > adaptRef.current) {
         lastFetch.current = now;
         osmAttemptsRef.current++;
-        fetchLimit(lat, lon).then(info => {
+        fetchLimit(lat, lon, osmEndpointsRef.current).then(info => {
           if (info.src === "hors ligne") osmFailuresRef.current++;
           setOsmStats({ attempts: osmAttemptsRef.current, failures: osmFailuresRef.current });
           if (info.limit !== lastOsm.current) { coolRef.current = 3; setZoneCooldown(3); }
@@ -1701,6 +1824,11 @@ export default function App() {
         keepAwake={keepAwake} setKeepAwake={setKeepAwake}
         pollUrban={pollUrban} setPollUrban={setPollUrban}
         pollRoad={pollRoad} setPollRoad={setPollRoad}
+        osmRankKumi={osmRankKumi} setOsmRankKumi={setOsmRankKumi}
+        osmRankPrivate={osmRankPrivate} setOsmRankPrivate={setOsmRankPrivate}
+        osmRankLz4={osmRankLz4} setOsmRankLz4={setOsmRankLz4}
+        osmCustomUrl={osmCustomUrl} setOsmCustomUrl={setOsmCustomUrl}
+        osmCustomRank={osmCustomRank} setOsmCustomRank={setOsmCustomRank}
         t={t}
         onClose={() => setShowSettings(false)}
       />
