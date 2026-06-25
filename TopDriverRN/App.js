@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.34-RN";
+const APP_VERSION = "v6.35-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -324,9 +324,8 @@ const DEFAULT_OVERPASS_ENDPOINTS = [
 
 // Groupes séquentiels par défaut (utilisés quand osmEndpointsRef n'est pas dispo)
 const DEFAULT_OVERPASS_GROUPS = [
-  { rank: 1, urls: ["https://overpass.kumi.systems/api/interpreter"] },
-  { rank: 2, urls: ["https://overpass.private.coffee/api/interpreter"] },
-  { rank: 3, urls: ["https://lz4.overpass-api.de/api/interpreter"] },
+  { rank: 1, urls: ["https://overpass.private.coffee/api/interpreter"] },
+  { rank: 2, urls: ["https://overpass.kumi.systems/api/interpreter"] },
 ];
 
 // fetchLimit reçoit des groupes [{rank, urls:[]}] triés par rang croissant.
@@ -343,13 +342,14 @@ async function fetchLimit(lat, lon, endpointGroups) {
     : DEFAULT_OVERPASS_GROUPS;
 
   const tryUrl = async (url) => {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("timeout")), 15000)
+    );
     try {
-      const r = await fetch(`${url}?data=${encodeURIComponent(q)}`, {
-        signal: controller.signal, headers: { "Accept": "application/json" },
+      const fetchPromise = fetch(`${url}?data=${encodeURIComponent(q)}`, {
+        headers: { "Accept": "application/json" },
       });
-      clearTimeout(timeoutId);
+      const r = await Promise.race([fetchPromise, timeout]);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const d = await r.json();
       if (!d.elements?.length) return { limit: 50, src: "défaut", ts: Date.now() };
@@ -370,7 +370,6 @@ async function fetchLimit(lat, lon, endpointGroups) {
       const res = { limit: (urban ? UL : DL)[hw] ?? 50, src: urban ? "agglo" : "défaut", road: sorted[0].tags?.name || "", ts: Date.now() };
       cache.set(k, res); return res;
     } catch(e) {
-      clearTimeout(timeoutId);
       console.warn(`Overpass ${url} failed:`, e.message);
       throw e;
     }
@@ -1046,9 +1045,9 @@ export default function App() {
   const [pollUrban, setPollUrban] = useState("5");
   const [pollRoad, setPollRoad] = useState("15");
   // Serveurs OSM : rang = ordre d'interrogation (vide = désactivé)
-  const [osmRankKumi, setOsmRankKumi] = useState("1");
-  const [osmRankPrivate, setOsmRankPrivate] = useState("2");
-  const [osmRankLz4, setOsmRankLz4] = useState("3");
+  const [osmRankKumi, setOsmRankKumi] = useState("2");
+  const [osmRankPrivate, setOsmRankPrivate] = useState("1");
+  const [osmRankLz4, setOsmRankLz4] = useState("");
   const [osmCustomUrl, setOsmCustomUrl] = useState("");
   const [osmCustomRank, setOsmCustomRank] = useState("");
   const settingsLoaded = useRef(false);
@@ -1119,9 +1118,8 @@ export default function App() {
   const distRef = useRef(0);
   const bipRef = useRef(true);
   const osmEndpointsRef = useRef([
-    { rank: 1, urls: ["https://overpass.kumi.systems/api/interpreter"] },
-    { rank: 2, urls: ["https://overpass.private.coffee/api/interpreter"] },
-    { rank: 3, urls: ["https://lz4.overpass-api.de/api/interpreter"] },
+    { rank: 1, urls: ["https://overpass.private.coffee/api/interpreter"] },
+    { rank: 2, urls: ["https://overpass.kumi.systems/api/interpreter"] },
   ]);
 
   useEffect(() => { activeRef.current = active; }, [active]);
