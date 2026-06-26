@@ -8,7 +8,7 @@ import * as Location from "expo-location";
 import * as TaskManager from "expo-task-manager";
 import { useKeepAwake } from "expo-keep-awake";
 import { WebView } from "react-native-webview";
-import Svg, { Circle, Text as SvgText } from "react-native-svg";
+import Svg, { Circle, Text as SvgText, Path, Defs, LinearGradient, Stop, ClipPath, Rect, G } from "react-native-svg";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy";
 import * as IntentLauncher from "expo-intent-launcher";
@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.40-RN";
+const APP_VERSION = "v6.41-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -538,14 +538,54 @@ const beep = type => Vibration.vibrate(type === "severe" ? [0, 200, 100, 200] : 
 // UI COMPONENTS
 // ═══════════════════════════════════════
 
-// Boucliers (emoji avec opacité)
-const Shields = ({ score, size = 20 }) => (
-  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 2 }}>
-    {Array.from({ length: 10 }, (_, i) => (
-      <Text key={i} style={{ fontSize: size, opacity: i < shields10(score) ? 1 : 0.15 }}>🛡️</Text>
-    ))}
-  </View>
-);
+// Forme du bouclier (viewBox 0 0 100 110)
+const SHIELD_PATH = "M50,5 C50,5 10,18 10,50 C10,80 28,100 50,107 C72,100 90,80 90,50 C90,18 50,5 50,5 Z";
+const SHIELD_COLOR = "#1976d2";
+const SHIELD_EMPTY = "#d0d0d0";
+
+// Un seul bouclier SVG : full | half | empty
+function ShieldIcon({ state = "full", size = 22 }) {
+  const id = `clip_${state}_${Math.random().toString(36).slice(2,7)}`;
+  return (
+    <Svg width={size} height={size * 1.1} viewBox="0 0 100 110">
+      <Defs>
+        <ClipPath id={`${id}_left`}>
+          <Rect x="0" y="0" width="50" height="110" />
+        </ClipPath>
+        <ClipPath id={`${id}_right`}>
+          <Rect x="50" y="0" width="50" height="110" />
+        </ClipPath>
+      </Defs>
+      {/* Fond grisé (toujours présent) */}
+      <Path d={SHIELD_PATH} fill={SHIELD_EMPTY} />
+      {/* Moitié gauche colorée si half ou full */}
+      {(state === "half" || state === "full") && (
+        <Path d={SHIELD_PATH} fill={SHIELD_COLOR} clipPath={`url(#${id}_left)`} />
+      )}
+      {/* Moitié droite colorée si full */}
+      {state === "full" && (
+        <Path d={SHIELD_PATH} fill={SHIELD_COLOR} clipPath={`url(#${id}_right)`} />
+      )}
+    </Svg>
+  );
+}
+
+// Composant principal : score 0-10 → 5 boucliers avec demi-boucliers
+const Shields = ({ score, size = 22 }) => {
+  // score sur 10 → valeur sur 5 avec pas de 0.5
+  const val = Math.max(0, Math.min(10, score)) / 2; // 0 à 5
+  const shields = [0, 1, 2, 3, 4].map(i => {
+    const diff = val - i;
+    if (diff >= 1) return "full";
+    if (diff >= 0.5) return "half";
+    return "empty";
+  });
+  return (
+    <View style={{ flexDirection: "row", gap: 3, alignItems: "center" }}>
+      {shields.map((state, i) => <ShieldIcon key={i} state={state} size={size} />)}
+    </View>
+  );
+};
 
 // Jauge circulaire simple avec View
 const Gauge = ({ speed, limit, active, unit }) => {
@@ -676,12 +716,12 @@ function ReportModal({ visible, report, t, unit, onClose, onSave, onConsolidate,
   if (!report) return null;
   const inf = report.infractions || []; // toujours par rapport à la limite stricte
   const sc = report.score ?? 10;
-  const sh = shields10(sc);
+  const val5 = sc / 2; // score 0-10 → 0-5 pour l'affichage
   const counted = inf.filter(i => i.sev !== "tolerance");
   const ul = unit === "mph" ? "mph" : "km/h";
-  // 10 couleurs (dégradé rouge -> orange -> bleu -> vert), et mapping vers les 5 verdicts existants
-  const vColors = ["#f43f5e", "#f43f5e", "#f97316", "#f97316", "#f59e0b", "#f59e0b", "#0ea5e9", "#0ea5e9", "#22c55e", "#22c55e"];
-  const verdictIdx = Math.min(4, Math.floor((sh - 1) / 2)); // sh 1-10 -> verdict 0-4
+  const vColors = ["#f43f5e", "#f97316", "#f59e0b", "#0ea5e9", "#22c55e"];
+  const verdictIdx = Math.min(4, Math.floor(val5)); // 0-1→0, 1-2→1, 2-3→2, 3-4→3, 4-5→4
+  const colorIdx = Math.min(4, Math.floor(val5));
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
@@ -718,8 +758,8 @@ function ReportModal({ visible, report, t, unit, onClose, onSave, onConsolidate,
               <View style={gs.cell}><Text style={gs.cellLbl}>{t.maxSpeed}</Text><Text style={gs.cellVal}>{toSpd(report.maxSpd || 0, unit)} {ul}</Text></View>
               <View style={gs.cell}><Text style={gs.cellLbl}>{t.totalInf}</Text><Text style={[gs.cellVal, { color: counted.length ? C.red : C.green }]}>{counted.length}</Text></View>
             </View>
-            <View style={[gs.verdict, { backgroundColor: vColors[sh - 1] + "20" }]}>
-              <Text style={[gs.verdictTxt, { color: vColors[sh - 1] }]}>{t.verdicts[verdictIdx]}</Text>
+            <View style={[gs.verdict, { backgroundColor: vColors[colorIdx] + "20" }]}>
+              <Text style={[gs.verdictTxt, { color: vColors[colorIdx] }]}>{t.verdicts[verdictIdx]}</Text>
             </View>
           </View>
 
@@ -862,8 +902,21 @@ function SaveFileModal({ visible, defaultName, onCancel, onConfirm }) {
 // ═══════════════════════════════════════
 // MODAL: SETTINGS
 // ═══════════════════════════════════════
+const KNOWN_OSM_SERVERS = [
+  { label: "overpass-api.de", url: "https://overpass-api.de/api/interpreter" },
+  { label: "kumi.systems", url: "https://overpass.kumi.systems/api/interpreter" },
+  { label: "maps.mail.ru", url: "https://maps.mail.ru/osm/tools/overpass/api/interpreter" },
+  { label: "private.coffee", url: "https://overpass.private.coffee/api/interpreter" },
+  { label: "lz4.overpass-api.de", url: "https://lz4.overpass-api.de/api/interpreter" },
+  { label: "Personnalisé...", url: "" },
+];
+
 function OsmServerRow({ label, url, setUrl, rank, setRank }) {
-  const [testStatus, setTestStatus] = useState(null); // null | "testing" | "ok" | "fail"
+  const [testStatus, setTestStatus] = useState(null);
+  const [showPicker, setShowPicker] = useState(false);
+
+  const isCustom = !KNOWN_OSM_SERVERS.slice(0, -1).some(s => s.url === url);
+  const selectedLabel = isCustom ? "Personnalisé..." : (KNOWN_OSM_SERVERS.find(s => s.url === url)?.label || "Personnalisé...");
 
   const testServer = async () => {
     if (!url.trim()) return;
@@ -883,17 +936,47 @@ function OsmServerRow({ label, url, setUrl, rank, setRank }) {
 
   return (
     <View style={{ marginBottom: 12, backgroundColor: C.surface2, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: C.border }}>
-      <Text style={[gs.settingLbl, { marginBottom: 6 }]}>{label}</Text>
-      <TextInput
-        style={[gs.pollInput, { flex: 1, width: "100%", textAlign: "left", paddingHorizontal: 10, fontSize: 11, marginBottom: 8 }]}
-        value={url}
-        onChangeText={v => { setUrl(v); setTestStatus(null); }}
-        placeholder="https://..."
-        placeholderTextColor={C.muted}
-        autoCapitalize="none"
-        autoCorrect={false}
-        keyboardType="url"
-      />
+      <Text style={[gs.settingLbl, { marginBottom: 8 }]}>{label}</Text>
+
+      {/* Menu déroulant simulé */}
+      <TouchableOpacity
+        style={{ borderWidth: 1, borderColor: C.border, borderRadius: 8, padding: 10, marginBottom: 8, flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}
+        onPress={() => setShowPicker(v => !v)}
+      >
+        <Text style={{ color: C.text, fontSize: 13 }}>{selectedLabel}</Text>
+        <Text style={{ color: C.muted }}>{showPicker ? "▲" : "▼"}</Text>
+      </TouchableOpacity>
+
+      {showPicker && (
+        <View style={{ borderWidth: 1, borderColor: C.border, borderRadius: 8, marginBottom: 8, overflow: "hidden" }}>
+          {KNOWN_OSM_SERVERS.map(s => (
+            <TouchableOpacity
+              key={s.label}
+              style={{ padding: 10, borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: url === s.url ? C.blue + "18" : C.surface }}
+              onPress={() => { setUrl(s.url); setTestStatus(null); setShowPicker(false); }}
+            >
+              <Text style={{ color: url === s.url ? C.blue : C.text, fontSize: 13, fontWeight: url === s.url ? "700" : "400" }}>{s.label}</Text>
+              {s.url ? <Text style={{ color: C.muted, fontSize: 10 }}>{s.url}</Text> : null}
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      {/* Champ texte libre si personnalisé */}
+      {isCustom && (
+        <TextInput
+          style={[gs.pollInput, { width: "100%", textAlign: "left", paddingHorizontal: 10, fontSize: 11, marginBottom: 8 }]}
+          value={url}
+          onChangeText={v => { setUrl(v); setTestStatus(null); }}
+          placeholder="https://mon-serveur.com/api/interpreter"
+          placeholderTextColor={C.muted}
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+        />
+      )}
+
+      {/* Rang + Tester */}
       <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
         <Text style={[gs.settingLbl, { marginBottom: 0 }]}>Rang :</Text>
         <TextInput
@@ -908,14 +991,14 @@ function OsmServerRow({ label, url, setUrl, rank, setRank }) {
         <TouchableOpacity
           style={{ backgroundColor: C.blue, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 12 }}
           onPress={testServer}
-          disabled={testStatus === "testing"}
+          disabled={testStatus === "testing" || !url.trim()}
         >
           <Text style={{ color: "#fff", fontSize: 12, fontWeight: "700" }}>
             {testStatus === "testing" ? "⏳" : "Tester"}
           </Text>
         </TouchableOpacity>
-        {testStatus === "ok" && <Text style={{ color: "#22c55e", fontWeight: "700" }}>✅ OK</Text>}
-        {testStatus === "fail" && <Text style={{ color: C.red, fontWeight: "700" }}>❌ Échec</Text>}
+        {testStatus === "ok" && <Text style={{ color: "#22c55e", fontWeight: "700" }}>✅</Text>}
+        {testStatus === "fail" && <Text style={{ color: C.red, fontWeight: "700" }}>❌</Text>}
       </View>
     </View>
   );
@@ -1236,7 +1319,6 @@ export default function App() {
   };
 
   const score = computeScore(filterEpisodesForRadarScore(infractions));
-  const sh = shields10(score);
 
   const startTrip = async () => {
     setInfractions([]); infRef.current = []; curEpRef.current = null;
