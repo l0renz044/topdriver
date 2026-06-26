@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.41-RN";
+const APP_VERSION = "v6.42-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -538,34 +538,38 @@ const beep = type => Vibration.vibrate(type === "severe" ? [0, 200, 100, 200] : 
 // UI COMPONENTS
 // ═══════════════════════════════════════
 
-// Forme du bouclier (viewBox 0 0 100 110)
-const SHIELD_PATH = "M50,5 C50,5 10,18 10,50 C10,80 28,100 50,107 C72,100 90,80 90,50 C90,18 50,5 50,5 Z";
-const SHIELD_COLOR = "#1976d2";
-const SHIELD_EMPTY = "#d0d0d0";
+// Bouclier SVG fourni par l'utilisateur — adapté pour états full/half/empty
+function ShieldIcon({ state = "full", size = 28 }) {
+  const uid = state + "_" + size;
+  // Couleurs selon état
+  // full : tout bleu (#1976d2)
+  // half : moitié gauche bleue, moitié droite grise
+  // empty : tout gris (#d0d0d0)
+  const leftColor  = (state === "full" || state === "half") ? "#1976d2" : "#d0d0d0";
+  const rightColor = state === "full" ? "#1976d2" : "#d0d0d0";
 
-// Un seul bouclier SVG : full | half | empty
-function ShieldIcon({ state = "full", size = 22 }) {
-  const id = `clip_${state}_${Math.random().toString(36).slice(2,7)}`;
   return (
-    <Svg width={size} height={size * 1.1} viewBox="0 0 100 110">
+    <Svg width={size} height={size} viewBox="0 0 48 48">
       <Defs>
-        <ClipPath id={`${id}_left`}>
-          <Rect x="0" y="0" width="50" height="110" />
+        <ClipPath id={`cl_${uid}`}>
+          <Rect x="0" y="0" width="24" height="48" />
         </ClipPath>
-        <ClipPath id={`${id}_right`}>
-          <Rect x="50" y="0" width="50" height="110" />
+        <ClipPath id={`cr_${uid}`}>
+          <Rect x="24" y="0" width="24" height="48" />
         </ClipPath>
       </Defs>
-      {/* Fond grisé (toujours présent) */}
-      <Path d={SHIELD_PATH} fill={SHIELD_EMPTY} />
-      {/* Moitié gauche colorée si half ou full */}
-      {(state === "half" || state === "full") && (
-        <Path d={SHIELD_PATH} fill={SHIELD_COLOR} clipPath={`url(#${id}_left)`} />
-      )}
-      {/* Moitié droite colorée si full */}
-      {state === "full" && (
-        <Path d={SHIELD_PATH} fill={SHIELD_COLOR} clipPath={`url(#${id}_right)`} />
-      )}
+      {/* Fond blanc */}
+      <Path d="M36.95987,13.15124l-0.02002,2.14001c0,7.85998-3.27002,15.27997-8.81,19.97998l-4.02067,3.40882c-0.06886,0.05838-0.16984,0.05838-0.2387,0l-4.02066-3.40882c-5.53998-4.70001-8.81-12.12-8.81-19.97998l-0.00001-1.68753c0-0.38642,0.42222-0.58507,0.75086-0.38179c1.83846,1.1372,5.85839,0.4789,8.6692-0.94069c1.54999-0.77002,2.81-1.77997,3.29999-2.84998c0.09998-0.20001,0.37-0.21002,0.46002-0.01001c0.50995,1.07001,1.81995,2.08997,3.41998,2.85999c3.13,1.53998,7.39996,2.22998,8.96997,0.72003C36.73984,12.87127,36.96988,12.96124,36.95987,13.15124z" fill="#F4F4F4" />
+      {/* Moitié gauche */}
+      <Path clipPath={`url(#cl_${uid})`} d="M36.95987,13.15124l-0.02002,2.14001c0,7.85998-3.27002,15.27997-8.81,19.97998l-4.02067,3.40882c-0.06886,0.05838-0.16984,0.05838-0.2387,0l-4.02066-3.40882c-5.53998-4.70001-8.81-12.12-8.81-19.97998l-0.00001-1.68753c0-0.38642,0.42222-0.58507,0.75086-0.38179c1.83846,1.1372,5.85839,0.4789,8.6692-0.94069c1.54999-0.77002,2.81-1.77997,3.29999-2.84998c0.09998-0.20001,0.37-0.21002,0.46002-0.01001c0.50995,1.07001,1.81995,2.08997,3.41998,2.85999c3.13,1.53998,7.39996,2.22998,8.96997,0.72003C36.73984,12.87127,36.96988,12.96124,36.95987,13.15124z" fill={leftColor} />
+      {/* Moitié droite */}
+      <Path clipPath={`url(#cr_${uid})`} d="M36.95987,13.15124l-0.02002,2.14001c0,7.85998-3.27002,15.27997-8.81,19.97998l-4.02067,3.40882c-0.06886,0.05838-0.16984,0.05838-0.2387,0l-4.02066-3.40882c-5.53998-4.70001-8.81-12.12-8.81-19.97998l-0.00001-1.68753c0-0.38642,0.42222-0.58507,0.75086-0.38179c1.83846,1.1372,5.85839,0.4789,8.6692-0.94069c1.54999-0.77002,2.81-1.77997,3.29999-2.84998c0.09998-0.20001,0.37-0.21002,0.46002-0.01001c0.50995,1.07001,1.81995,2.08997,3.41998,2.85999c3.13,1.53998,7.39996,2.22998,8.96997,0.72003C36.73984,12.87127,36.96988,12.96124,36.95987,13.15124z" fill={rightColor} />
+      {/* Contour */}
+      <Path d="M12.84042,15.48541c0.05371,7.23779,3.10059,14.10937,8.17383,18.41309l2.97559,2.52344l2.97607-2.52344c5.07617-4.30664,8.12353-11.18408,8.17334-18.42676c-2.58398,0.43506-5.9165-0.40771-8.29346-1.57471c-1.14502-0.55566-2.0957-1.18262-2.8335-1.85986c-0.71582,0.67432-1.6377,1.29932-2.74707,1.854C18.92295,15.07378,15.49228,15.94293,12.84042,15.48541z" fill="none" stroke="#303030" strokeWidth="0.7" strokeLinecap="round" strokeLinejoin="round" />
+      <Path d="M36.95987,13.15124l-0.02002,2.14001c0,7.85998-3.27002,15.27997-8.81,19.97998l-4.02067,3.40882c-0.06886,0.05838-0.16984,0.05838-0.2387,0l-4.02066-3.40882c-5.53998-4.70001-8.81-12.12-8.81-19.97998l-0.00001-1.68753c0-0.38642,0.42222-0.58507,0.75086-0.38179c1.83846,1.1372,5.85839,0.4789,8.6692-0.94069c1.54999-0.77002,2.81-1.77997,3.29999-2.84998c0.09998-0.20001,0.37-0.21002,0.46002-0.01001c0.50995,1.07001,1.81995,2.08997,3.41998,2.85999c3.13,1.53998,7.39996,2.22998,8.96997,0.72003C36.73984,12.87127,36.96988,12.96124,36.95987,13.15124z" fill="none" stroke="#303030" strokeWidth="0.7" strokeLinecap="round" strokeLinejoin="round" />
+      {/* Lignes de séparation */}
+      <Path d="M24.0123,12.03716 L23.98984,36.42193" fill="none" stroke="#303030" strokeWidth="0.7" strokeLinecap="round" />
+      <Path d="M14.34298,24.03353 L33.56545,24.03353" fill="none" stroke="#303030" strokeWidth="0.7" strokeLinecap="round" />
     </Svg>
   );
 }
