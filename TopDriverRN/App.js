@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.42-RN";
+const APP_VERSION = "v6.49-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -147,6 +147,7 @@ function haversine(la1, lo1, la2, lo2) {
 const BG_TASK = "topdriver-bg-location";
 const BG_TRAJ_KEY = "td_bg_traj";     // trajectoire accumulée
 const BG_STATE_KEY = "td_bg_state";   // état partagé (vitesse, limite, épisodes)
+const OSM_ENDPOINTS_KEY = "td_osm_endpoints"; // endpoints OSM configurés par l'utilisateur
 
 // Helpers disponibles dans le contexte background (pas de React)
 const bgHaversine = (la1, lo1, la2, lo2) => {
@@ -217,15 +218,6 @@ TaskManager.defineTask(BG_TASK, async ({ data, error }) => {
       const lastKnownLimit = state.lastLimitOSM ?? null;
       bgTrajCache.push({ lat, lon, t: now, speed: spd, limitOSM: lastKnownLimit });
       if (bgTrajCache.length > 5000) bgTrajCache.splice(0, bgTrajCache.length - 5000);
-    }
-
-    // Fetch OSM périodique en arrière-plan (toutes les ~10s) pour garder limitOSM à jour
-    if (!state.lastOsmFetch || now - state.lastOsmFetch > 10000) {
-      state.lastOsmFetch = now;
-      try {
-        const info = await fetchLimit(lat, lon);
-        state.lastLimitOSM = info.limit;
-      } catch {}
     }
 
     await AsyncStorage.setItem(BG_STATE_KEY, JSON.stringify(state));
@@ -317,6 +309,7 @@ const UL = { motorway: 110, trunk: 90, primary: 50, secondary: 50, tertiary: 50,
 const BP = ["motorway", "trunk", "primary", "secondary", "tertiary", "motorway_link", "trunk_link", "primary_link", "secondary_link", "unclassified", "residential"];
 const parseMs = r => { if (!r) return null; const n = parseInt(r); if (!isNaN(n) && n > 0) return n; const sp = { "fr:urban": 50, "fr:rural": 80, "fr:motorway": 130, "walk": 20 }; return sp[r.trim().toLowerCase()] ?? null; };
 const cache = new Map();
+let currentEndpointIdx = 0; // index du serveur actif courant (sticky server)
 const OVERPASS_ENDPOINTS = [
   "https://overpass-api.de/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
@@ -330,17 +323,26 @@ async function fetchLimit(lat, lon, endpoints) {
   if (c && Date.now() - c.ts < 300000) return c;
   const q = `[out:json][timeout:10];way(around:50,${lat},${lon})[highway][highway!~"footway|path|steps|cycleway"];out tags 5;`;
 
-  for (const endpoint of ep) {
+  // Stratégie "sticky server" : on commence par le serveur actif courant
+  // Si il échoue → on passe au suivant et on le mémorise pour les prochains points
+  // Si tous échouent → on repart du rang 1 au prochain appel
+  const startIdx = Math.min(currentEndpointIdx, ep.length - 1);
+
+  for (let i = 0; i < ep.length; i++) {
+    const idx = (startIdx + i) % ep.length;
+    const endpoint = ep[idx];
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
       const r = await fetch(`${endpoint}?data=${encodeURIComponent(q)}`, {
         signal: controller.signal,
         headers: { "Accept": "application/json" },
       });
       clearTimeout(timeoutId);
-      if (!r.ok) continue;
+      if (!r.ok) { console.warn(`Overpass ${endpoint} failed: HTTP ${r.status}`); continue; }
       const d = await r.json();
+      // Succès → ce serveur devient le serveur actif courant
+      currentEndpointIdx = idx;
       if (!d.elements?.length) return { limit: 50, src: "défaut" };
       const sorted = [...d.elements].sort((a, b) => {
         const ia = BP.indexOf(a.tags?.highway || "");
@@ -358,9 +360,15 @@ async function fetchLimit(lat, lon, endpoints) {
       const urban = ["residential", "living_street", "service", "unclassified"].includes(hw);
       const res = { limit: (urban ? UL : DL)[hw] ?? 50, src: urban ? "agglo" : "défaut", road: sorted[0].tags?.name || "", ts: Date.now() };
       cache.set(k, res); return res;
-    } catch(e) { console.warn(`Overpass ${endpoint} failed:`, e.message); continue; }
+    } catch(e) {
+      console.warn(`Overpass ${endpoint} failed:`, e.message);
+      // Échec → on passera au suivant, et si c'est le dernier on repart de 0
+      if (i === ep.length - 1) currentEndpointIdx = 0;
+      continue;
+    }
   }
   console.warn("All Overpass endpoints failed");
+  currentEndpointIdx = 0; // reset pour le prochain appel
   return { limit: 50, src: "hors ligne" };
 }
 
@@ -538,36 +546,30 @@ const beep = type => Vibration.vibrate(type === "severe" ? [0, 200, 100, 200] : 
 // UI COMPONENTS
 // ═══════════════════════════════════════
 
-// Bouclier SVG fourni par l'utilisateur — adapté pour états full/half/empty
-function ShieldIcon({ state = "full", size = 28 }) {
-  const uid = state + "_" + size;
-  // Couleurs selon état
-  // full : tout bleu (#1976d2)
-  // half : moitié gauche bleue, moitié droite grise
-  // empty : tout gris (#d0d0d0)
-  const leftColor  = (state === "full" || state === "half") ? "#1976d2" : "#d0d0d0";
-  const rightColor = state === "full" ? "#1976d2" : "#d0d0d0";
+// Bouclier SVG — 3 états :
+// full  : haut-gauche bleu + bas-droit bleu (SVG original)
+// half  : haut-gauche bleu uniquement
+// empty : tout gris
+const SHIELD_BLUE = "#5F83CF";
+const SHIELD_GREY = "#F4F4F4";
+
+function ShieldIcon({ state = "full", size = 44 }) {
+  const topLeft  = (state === "full" || state === "half") ? SHIELD_BLUE : SHIELD_GREY;
+  const botRight = state === "full" ? SHIELD_BLUE : SHIELD_GREY;
 
   return (
     <Svg width={size} height={size} viewBox="0 0 48 48">
-      <Defs>
-        <ClipPath id={`cl_${uid}`}>
-          <Rect x="0" y="0" width="24" height="48" />
-        </ClipPath>
-        <ClipPath id={`cr_${uid}`}>
-          <Rect x="24" y="0" width="24" height="48" />
-        </ClipPath>
-      </Defs>
-      {/* Fond blanc */}
-      <Path d="M36.95987,13.15124l-0.02002,2.14001c0,7.85998-3.27002,15.27997-8.81,19.97998l-4.02067,3.40882c-0.06886,0.05838-0.16984,0.05838-0.2387,0l-4.02066-3.40882c-5.53998-4.70001-8.81-12.12-8.81-19.97998l-0.00001-1.68753c0-0.38642,0.42222-0.58507,0.75086-0.38179c1.83846,1.1372,5.85839,0.4789,8.6692-0.94069c1.54999-0.77002,2.81-1.77997,3.29999-2.84998c0.09998-0.20001,0.37-0.21002,0.46002-0.01001c0.50995,1.07001,1.81995,2.08997,3.41998,2.85999c3.13,1.53998,7.39996,2.22998,8.96997,0.72003C36.73984,12.87127,36.96988,12.96124,36.95987,13.15124z" fill="#F4F4F4" />
-      {/* Moitié gauche */}
-      <Path clipPath={`url(#cl_${uid})`} d="M36.95987,13.15124l-0.02002,2.14001c0,7.85998-3.27002,15.27997-8.81,19.97998l-4.02067,3.40882c-0.06886,0.05838-0.16984,0.05838-0.2387,0l-4.02066-3.40882c-5.53998-4.70001-8.81-12.12-8.81-19.97998l-0.00001-1.68753c0-0.38642,0.42222-0.58507,0.75086-0.38179c1.83846,1.1372,5.85839,0.4789,8.6692-0.94069c1.54999-0.77002,2.81-1.77997,3.29999-2.84998c0.09998-0.20001,0.37-0.21002,0.46002-0.01001c0.50995,1.07001,1.81995,2.08997,3.41998,2.85999c3.13,1.53998,7.39996,2.22998,8.96997,0.72003C36.73984,12.87127,36.96988,12.96124,36.95987,13.15124z" fill={leftColor} />
-      {/* Moitié droite */}
-      <Path clipPath={`url(#cr_${uid})`} d="M36.95987,13.15124l-0.02002,2.14001c0,7.85998-3.27002,15.27997-8.81,19.97998l-4.02067,3.40882c-0.06886,0.05838-0.16984,0.05838-0.2387,0l-4.02066-3.40882c-5.53998-4.70001-8.81-12.12-8.81-19.97998l-0.00001-1.68753c0-0.38642,0.42222-0.58507,0.75086-0.38179c1.83846,1.1372,5.85839,0.4789,8.6692-0.94069c1.54999-0.77002,2.81-1.77997,3.29999-2.84998c0.09998-0.20001,0.37-0.21002,0.46002-0.01001c0.50995,1.07001,1.81995,2.08997,3.41998,2.85999c3.13,1.53998,7.39996,2.22998,8.96997,0.72003C36.73984,12.87127,36.96988,12.96124,36.95987,13.15124z" fill={rightColor} />
-      {/* Contour */}
+      {/* Fond gris */}
+      <Path d="M36.95987,13.15124l-0.02002,2.14001c0,7.85998-3.27002,15.27997-8.81,19.97998l-4.02067,3.40882c-0.06886,0.05838-0.16984,0.05838-0.2387,0l-4.02066-3.40882c-5.53998-4.70001-8.81-12.12-8.81-19.97998l-0.00001-1.68753c0-0.38642,0.42222-0.58507,0.75086-0.38179c1.83846,1.1372,5.85839,0.4789,8.6692-0.94069c1.54999-0.77002,2.81-1.77997,3.29999-2.84998c0.09998-0.20001,0.37-0.21002,0.46002-0.01001c0.50995,1.07001,1.81995,2.08997,3.41998,2.85999c3.13,1.53998,7.39996,2.22998,8.96997,0.72003C36.73984,12.87127,36.96988,12.96124,36.95987,13.15124z" fill={SHIELD_GREY} />
+      {/* Quadrant bas-droit */}
+      <Path d="M23.95421,24.03353v12.35819c0,0,6.91794-4.12646,9.61124-12.35819H23.95421z" fill={botRight} />
+      {/* Quadrant haut-gauche */}
+      <Path d="M23.95421,12.09101v11.94252h-9.61124c0,0-1.74528-4.5543-1.37527-8.52826C12.9677,15.50527,18.20421,16.46545,23.95421,12.09101z" fill={topLeft} />
+      {/* Contour intérieur */}
       <Path d="M12.84042,15.48541c0.05371,7.23779,3.10059,14.10937,8.17383,18.41309l2.97559,2.52344l2.97607-2.52344c5.07617-4.30664,8.12353-11.18408,8.17334-18.42676c-2.58398,0.43506-5.9165-0.40771-8.29346-1.57471c-1.14502-0.55566-2.0957-1.18262-2.8335-1.85986c-0.71582,0.67432-1.6377,1.29932-2.74707,1.854C18.92295,15.07378,15.49228,15.94293,12.84042,15.48541z" fill="none" stroke="#303030" strokeWidth="0.7" strokeLinecap="round" strokeLinejoin="round" />
+      {/* Contour extérieur */}
       <Path d="M36.95987,13.15124l-0.02002,2.14001c0,7.85998-3.27002,15.27997-8.81,19.97998l-4.02067,3.40882c-0.06886,0.05838-0.16984,0.05838-0.2387,0l-4.02066-3.40882c-5.53998-4.70001-8.81-12.12-8.81-19.97998l-0.00001-1.68753c0-0.38642,0.42222-0.58507,0.75086-0.38179c1.83846,1.1372,5.85839,0.4789,8.6692-0.94069c1.54999-0.77002,2.81-1.77997,3.29999-2.84998c0.09998-0.20001,0.37-0.21002,0.46002-0.01001c0.50995,1.07001,1.81995,2.08997,3.41998,2.85999c3.13,1.53998,7.39996,2.22998,8.96997,0.72003C36.73984,12.87127,36.96988,12.96124,36.95987,13.15124z" fill="none" stroke="#303030" strokeWidth="0.7" strokeLinecap="round" strokeLinejoin="round" />
-      {/* Lignes de séparation */}
+      {/* Croix de séparation */}
       <Path d="M24.0123,12.03716 L23.98984,36.42193" fill="none" stroke="#303030" strokeWidth="0.7" strokeLinecap="round" />
       <Path d="M14.34298,24.03353 L33.56545,24.03353" fill="none" stroke="#303030" strokeWidth="0.7" strokeLinecap="round" />
     </Svg>
@@ -928,7 +930,7 @@ function OsmServerRow({ label, url, setUrl, rank, setRank }) {
     try {
       const q = `[out:json][timeout:5];way(around:50,48.8566,2.3522)[highway];out tags 1;`;
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
       const r = await fetch(`${url.trim()}?data=${encodeURIComponent(q)}`, {
         signal: controller.signal,
         headers: { "Accept": "application/json" },
@@ -1133,7 +1135,10 @@ export default function App() {
       .filter(s => s.url.trim() && s.rank !== "" && !isNaN(parseInt(s.rank, 10)))
       .sort((a, b) => parseInt(a.rank, 10) - parseInt(b.rank, 10))
       .map(s => s.url.trim());
-    osmEndpointsRef.current = active.length > 0 ? active : OVERPASS_ENDPOINTS;
+    const endpoints = active.length > 0 ? active : OVERPASS_ENDPOINTS;
+    osmEndpointsRef.current = endpoints;
+    // Persiste pour le TaskManager qui n'a pas accès aux états React
+    AsyncStorage.setItem(OSM_ENDPOINTS_KEY, JSON.stringify(endpoints)).catch(() => {});
   }, [osmServer1Url, osmServer1Rank, osmServer2Url, osmServer2Rank, osmServer3Url, osmServer3Rank]);
 
   // Sauvegarder les paramètres uniquement après le chargement initial
@@ -1337,6 +1342,7 @@ export default function App() {
     currentConsolidated.current = null; setCurrentConsolidatedDate(null);
     lastOsm.current = limRef.current.limit;
     cache.clear();
+    currentEndpointIdx = 0;
     // Vider les données background du trajet précédent
     AsyncStorage.removeItem(BG_TRAJ_KEY);
     AsyncStorage.removeItem(BG_STATE_KEY);
