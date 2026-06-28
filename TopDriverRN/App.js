@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.49-RN";
+const APP_VERSION = "v6.51-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -553,7 +553,7 @@ const beep = type => Vibration.vibrate(type === "severe" ? [0, 200, 100, 200] : 
 const SHIELD_BLUE = "#5F83CF";
 const SHIELD_GREY = "#F4F4F4";
 
-function ShieldIcon({ state = "full", size = 44 }) {
+function ShieldIcon({ state = "full", size = 176 }) {
   const topLeft  = (state === "full" || state === "half") ? SHIELD_BLUE : SHIELD_GREY;
   const botRight = state === "full" ? SHIELD_BLUE : SHIELD_GREY;
 
