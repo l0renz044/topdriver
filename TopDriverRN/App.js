@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.51-RN";
+const APP_VERSION = "v6.52-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -577,7 +577,7 @@ function ShieldIcon({ state = "full", size = 176 }) {
 }
 
 // Composant principal : score 0-10 → 5 boucliers avec demi-boucliers
-const Shields = ({ score, size = 22 }) => {
+const Shields = ({ score, size = 176 }) => {
   // score sur 10 → valeur sur 5 avec pas de 0.5
   const val = Math.max(0, Math.min(10, score)) / 2; // 0 à 5
   const shields = [0, 1, 2, 3, 4].map(i => {
@@ -754,7 +754,7 @@ function ReportModal({ visible, report, t, unit, onClose, onSave, onConsolidate,
           <View style={gs.block}>
             <Text style={gs.blockTitle}>🛡️ {t.safeScore}</Text>
             <View style={{ alignItems: "center", marginVertical: 10 }}>
-              <Shields score={sc} size={24} />
+              <Shields score={sc} size={176} />
             </View>
             <View style={gs.grid2}>
               <View style={gs.cell}><Text style={gs.cellLbl}>{t.departure}</Text><Text style={gs.cellVal}>{report.startTime ? fmtTime(new Date(report.startTime)) : "--"}</Text></View>
@@ -850,7 +850,7 @@ function HistoryModal({ visible, reports, t, unit, onClose, onDelete, onView, on
                     {processingId === rep.id && <Text style={[gs.histDate, { color: C.blue, fontWeight: "700" }]}>⏳ Consolidation en cours...</Text>}
                   </View>
                   <View style={{ alignItems: "flex-end" }}>
-                    <Shields score={rep.score ?? 5} size={14} />
+                    <Shields score={rep.score ?? 5} size={88} />
                   </View>
                 </View>
                 <Text style={gs.histMeta}>{toDist(rep.dist, rep.unit || "kmh")} · {fmtDur(rep.elapsed)} · {rep.infractions?.filter(i => i.sev !== "tolerance").length || 0} épisodes</Text>
@@ -1736,7 +1736,7 @@ export default function App() {
           <View style={gs.endCards}>
             <View style={gs.endCard}>
               <Text style={gs.endCardLbl}>{t.safeScore}</Text>
-              <Shields score={sc} size={22} />
+              <Shields score={sc} size={176} />
             </View>
           </View>
           <TouchableOpacity style={[gs.btn, gs.btnBlue, { width: "100%" }]} onPress={() => setShowReport(true)}>
@@ -1823,7 +1823,7 @@ export default function App() {
       <View style={gs.row}>
         <View style={gs.card}>
           <Text style={gs.cardLbl}>{t.safeScore}</Text>
-          <Shields score={score} size={16} />
+          <Shields score={score} size={176} />
           <View style={gs.cardSub}>
             <View style={{ alignItems: "center" }}>
               <Text style={gs.cardSubLbl}>{t.infractions}</Text>
