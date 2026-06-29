@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.53-RN";
+const APP_VERSION = "v6.55-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -587,7 +587,7 @@ const Shields = ({ score, size = 52 }) => {
     return "empty";
   });
   return (
-    <View style={{ flexDirection: "row", gap: 3, alignItems: "center" }}>
+    <View style={{ flexDirection: "row", gap: 2, alignItems: "center" }}>
       {shields.map((state, i) => <ShieldIcon key={i} state={state} size={size} />)}
     </View>
   );
@@ -1421,7 +1421,7 @@ export default function App() {
       let newPointAdded = false;
       if (!prev.length || haversine(prev[prev.length - 1].lat, prev[prev.length - 1].lon, lat, lon) > 0.003) {
         if (prev.length) { distRef.current += haversine(prev[prev.length - 1].lat, prev[prev.length - 1].lon, lat, lon); setDist(distRef.current); }
-        trajRef.current = [...prev, pt]; setTraj([...trajRef.current]);
+        trajRef.current = [...prev, pt];
         newPointAdded = true;
       }
 
@@ -1517,6 +1517,8 @@ export default function App() {
       }
       curEpRef.current = null;
     }
+    // Synchroniser l'état traj depuis la ref (pas mis à jour en temps réel pendant le trajet)
+    setTraj([...trajRef.current]);
     setActive(false); setSpeed(0); setEndTime(new Date());
     if (typeof locSub.current?.remove === "function") {
       locSub.current.remove();
