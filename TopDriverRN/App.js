@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.56-RN";
+const APP_VERSION = "v6.57-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -551,7 +551,7 @@ function ShieldIcon({ state = "full", size = 52 }) {
   const botRight = state === "full" ? SHIELD_BLUE : SHIELD_GREY;
 
   return (
-    <Svg width={size} height={size} viewBox="0 0 48 48">
+    <Svg width={size} height={size} viewBox="10 7 28 34">
       {/* Fond gris */}
       <Path d="M36.95987,13.15124l-0.02002,2.14001c0,7.85998-3.27002,15.27997-8.81,19.97998l-4.02067,3.40882c-0.06886,0.05838-0.16984,0.05838-0.2387,0l-4.02066-3.40882c-5.53998-4.70001-8.81-12.12-8.81-19.97998l-0.00001-1.68753c0-0.38642,0.42222-0.58507,0.75086-0.38179c1.83846,1.1372,5.85839,0.4789,8.6692-0.94069c1.54999-0.77002,2.81-1.77997,3.29999-2.84998c0.09998-0.20001,0.37-0.21002,0.46002-0.01001c0.50995,1.07001,1.81995,2.08997,3.41998,2.85999c3.13,1.53998,7.39996,2.22998,8.96997,0.72003C36.73984,12.87127,36.96988,12.96124,36.95987,13.15124z" fill={SHIELD_GREY} />
       {/* Quadrant bas-droit */}
@@ -580,7 +580,7 @@ const Shields = ({ score, size = 52 }) => {
     return "empty";
   });
   return (
-    <View style={{ flexDirection: "row", gap: 2, alignItems: "center" }}>
+    <View style={{ flexDirection: "row", gap: 0, alignItems: "center" }}>
       {shields.map((state, i) => <ShieldIcon key={i} state={state} size={size} />)}
     </View>
   );
