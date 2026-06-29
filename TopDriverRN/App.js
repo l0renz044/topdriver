@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.55-RN";
+const APP_VERSION = "v6.56-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -323,53 +323,46 @@ async function fetchLimit(lat, lon, endpoints) {
   if (c && Date.now() - c.ts < 300000) return c;
   const q = `[out:json][timeout:10];way(around:50,${lat},${lon})[highway][highway!~"footway|path|steps|cycleway"];out tags 5;`;
 
-  // Stratégie "sticky server" : on commence par le serveur actif courant
-  // Si il échoue → on passe au suivant et on le mémorise pour les prochains points
-  // Si tous échouent → on repart du rang 1 au prochain appel
-  const startIdx = Math.min(currentEndpointIdx, ep.length - 1);
+  // Stratégie sticky : un seul appel par point GPS
+  // Succès → on garde le même serveur pour le point suivant
+  // Échec  → on passe au serveur suivant pour le point suivant, ce point reste en échec
+  const idx = Math.min(currentEndpointIdx, ep.length - 1);
+  const endpoint = ep[idx];
 
-  for (let i = 0; i < ep.length; i++) {
-    const idx = (startIdx + i) % ep.length;
-    const endpoint = ep[idx];
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
-      const r = await fetch(`${endpoint}?data=${encodeURIComponent(q)}`, {
-        signal: controller.signal,
-        headers: { "Accept": "application/json" },
-      });
-      clearTimeout(timeoutId);
-      if (!r.ok) { console.warn(`Overpass ${endpoint} failed: HTTP ${r.status}`); continue; }
-      const d = await r.json();
-      // Succès → ce serveur devient le serveur actif courant
-      currentEndpointIdx = idx;
-      if (!d.elements?.length) return { limit: 50, src: "défaut" };
-      const sorted = [...d.elements].sort((a, b) => {
-        const ia = BP.indexOf(a.tags?.highway || "");
-        const ib = BP.indexOf(b.tags?.highway || "");
-        return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
-      });
-      for (const el of sorted) {
-        const v = parseMs(el.tags?.maxspeed);
-        if (v) {
-          const res = { limit: v, src: "OSM", road: el.tags?.name || el.tags?.ref || "", ts: Date.now() };
-          cache.set(k, res); return res;
-        }
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+    const r = await fetch(`${endpoint}?data=${encodeURIComponent(q)}`, {
+      signal: controller.signal,
+      headers: { "Accept": "application/json" },
+    });
+    clearTimeout(timeoutId);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    // Succès → serveur conservé pour le prochain point
+    if (!d.elements?.length) return { limit: 50, src: "défaut" };
+    const sorted = [...d.elements].sort((a, b) => {
+      const ia = BP.indexOf(a.tags?.highway || "");
+      const ib = BP.indexOf(b.tags?.highway || "");
+      return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+    });
+    for (const el of sorted) {
+      const v = parseMs(el.tags?.maxspeed);
+      if (v) {
+        const res = { limit: v, src: "OSM", road: el.tags?.name || el.tags?.ref || "", ts: Date.now() };
+        cache.set(k, res); return res;
       }
-      const hw = sorted[0].tags?.highway || "";
-      const urban = ["residential", "living_street", "service", "unclassified"].includes(hw);
-      const res = { limit: (urban ? UL : DL)[hw] ?? 50, src: urban ? "agglo" : "défaut", road: sorted[0].tags?.name || "", ts: Date.now() };
-      cache.set(k, res); return res;
-    } catch(e) {
-      console.warn(`Overpass ${endpoint} failed:`, e.message);
-      // Échec → on passera au suivant, et si c'est le dernier on repart de 0
-      if (i === ep.length - 1) currentEndpointIdx = 0;
-      continue;
     }
+    const hw = sorted[0].tags?.highway || "";
+    const urban = ["residential", "living_street", "service", "unclassified"].includes(hw);
+    const res = { limit: (urban ? UL : DL)[hw] ?? 50, src: urban ? "agglo" : "défaut", road: sorted[0].tags?.name || "", ts: Date.now() };
+    cache.set(k, res); return res;
+  } catch(e) {
+    console.warn(`Overpass ${endpoint} failed:`, e.message);
+    // Échec → on avance au serveur suivant pour le prochain point
+    currentEndpointIdx = (idx + 1) % ep.length;
+    return { limit: 50, src: "hors ligne" };
   }
-  console.warn("All Overpass endpoints failed");
-  currentEndpointIdx = 0; // reset pour le prochain appel
-  return { limit: 50, src: "hors ligne" };
 }
 
 // ── User limits ──────────────────────────────
