@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.61-RN";
+const APP_VERSION = "v6.62-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -184,16 +184,6 @@ TaskManager.defineTask(BG_TASK, async ({ data, error }) => {
     // Si le trajet n'est plus actif (app fermée), on arrête le service
     const tripActive = await AsyncStorage.getItem(TRIP_ACTIVE_KEY);
     if (tripActive !== "true") {
-      try { await Location.stopLocationUpdatesAsync(BG_TASK); } catch {}
-      bgTaskRunning = false;
-      return;
-    }
-    // Vérifier si l'app est toujours vivante via un heartbeat
-    // L'app React met à jour td_heartbeat toutes les secondes pendant un trajet actif
-    // Si le heartbeat date de plus de 10s, l'app a été fermée brutalement
-    const heartbeat = await AsyncStorage.getItem("td_heartbeat");
-    if (heartbeat && Date.now() - parseInt(heartbeat, 10) > 10000) {
-      await AsyncStorage.setItem(TRIP_ACTIVE_KEY, "false");
       try { await Location.stopLocationUpdatesAsync(BG_TASK); } catch {}
       bgTaskRunning = false;
       return;
@@ -1224,15 +1214,6 @@ export default function App() {
   useEffect(() => { bipRef.current = bipEnabled; }, [bipEnabled]);
 
   useEffect(() => {
-    // Au démarrage : réinitialiser le flag et arrêter tout service résiduel
-    AsyncStorage.setItem(TRIP_ACTIVE_KEY, "false");
-    AsyncStorage.setItem("td_heartbeat", "0");
-    (async () => {
-      try {
-        const isRegistered = await TaskManager.isTaskRegisteredAsync(BG_TASK);
-        if (isRegistered) await Location.stopLocationUpdatesAsync(BG_TASK);
-      } catch {}
-    })();
     loadReps().then(setReports);
     // Vérifier si une nouvelle version est disponible
     fetch(VERSION_CHECK_URL, { headers: { "Cache-Control": "no-cache" } })
@@ -1269,44 +1250,40 @@ export default function App() {
   // Sync depuis le background quand l'app revient au premier plan
   useEffect(() => {
     const sub = AppState.addEventListener("change", async nextState => {
-      if (nextState === "background") {
-        if (!activeRef.current) {
-          // Pas de trajet → arrêter directement le service
-          try {
-            const isRegistered = await TaskManager.isTaskRegisteredAsync(BG_TASK);
-            if (isRegistered) await Location.stopLocationUpdatesAsync(BG_TASK);
-          } catch {}
-        } else {
-          // Trajet en cours → mettre le flag à false temporairement
-          // Si l'app est tuée, le TaskManager lira false et s'arrêtera
-          // Si l'app revient, on remettra à true dans le handler "active"
-          await AsyncStorage.setItem(TRIP_ACTIVE_KEY, "false");
-        }
+      if (nextState === "background" && !activeRef.current) {
+        // App fermée sans trajet actif → arrêter le foreground service
+        try {
+          const isRegistered = await TaskManager.isTaskRegisteredAsync(BG_TASK);
+          if (isRegistered) await Location.stopLocationUpdatesAsync(BG_TASK);
+        } catch {}
       }
-      if (nextState === "active") {
-        if (activeRef.current) {
-          // Trajet toujours en cours → remettre le flag à true
-          await AsyncStorage.setItem(TRIP_ACTIVE_KEY, "true");
-          try {
-            // Lire la trajectoire accumulée en arrière-plan
-            const rawTraj = await AsyncStorage.getItem(BG_TRAJ_KEY);
-            if (rawTraj) {
-              const bgTraj = JSON.parse(rawTraj);
-              if (bgTraj.length > trajRef.current.length) {
-                trajRef.current = bgTraj;
-                setTraj([...bgTraj]);
-              }
+      if (nextState === "active" && activeRef.current) {
+        try {
+          // Lire la trajectoire accumulée en arrière-plan
+          const rawTraj = await AsyncStorage.getItem(BG_TRAJ_KEY);
+          if (rawTraj) {
+            const bgTraj = JSON.parse(rawTraj);
+            if (bgTraj.length > trajRef.current.length) {
+              trajRef.current = bgTraj;
+              setTraj([...bgTraj]);
             }
-            // Lire l'état courant
-            const rawState = await AsyncStorage.getItem(BG_STATE_KEY);
-            if (rawState) {
-              const bgState = JSON.parse(rawState);
-              if (bgState.maxSpd) setMaxSpd(prev => Math.max(prev, bgState.maxSpd));
-              if (bgState.dist) { distRef.current = bgState.dist; setDist(bgState.dist); }
-              if (bgState.speed != null) setSpeed(bgState.speed);
-            }
-          } catch {}
-        }
+          }
+          // Lire l'état courant
+          const rawState = await AsyncStorage.getItem(BG_STATE_KEY);
+          if (rawState) {
+            const bgState = JSON.parse(rawState);
+            if (bgState.maxSpd) setMaxSpd(prev => Math.max(prev, bgState.maxSpd));
+            if (bgState.dist) { distRef.current = bgState.dist; setDist(bgState.dist); }
+            if (bgState.speed != null) setSpeed(bgState.speed);
+          }
+        } catch {}
+      }
+      // Si l'app passe en arrière-plan sans trajet actif → arrêter le foreground service
+      if (nextState === "background" && !activeRef.current) {
+        try {
+          const isRegistered = await TaskManager.isTaskRegisteredAsync(BG_TASK);
+          if (isRegistered) await Location.stopLocationUpdatesAsync(BG_TASK);
+        } catch {}
       }
     });
     return () => sub.remove();
@@ -1420,8 +1397,6 @@ export default function App() {
     let lastSyncedLen = 0;
     syncInterval.current = setInterval(async () => {
       try {
-        // Heartbeat : signale que l'app React est vivante
-        AsyncStorage.setItem("td_heartbeat", String(Date.now()));
         const rawTraj = await AsyncStorage.getItem(BG_TRAJ_KEY);
         if (rawTraj) {
           const bgTraj = JSON.parse(rawTraj);
