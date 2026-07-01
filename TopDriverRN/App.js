@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.57-RN";
+const APP_VERSION = "v6.58-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -544,27 +544,26 @@ const beep = type => Vibration.vibrate(type === "severe" ? [0, 200, 100, 200] : 
 // half  : haut-gauche bleu uniquement
 // empty : tout gris
 const SHIELD_BLUE = "#5F83CF";
-const SHIELD_GREY = "#F4F4F4";
+const SHIELD_GREY = "#C0C0C0";
+const SHIELD_PATH = "M36.95987,13.15124l-0.02002,2.14001c0,7.85998-3.27002,15.27997-8.81,19.97998l-4.02067,3.40882c-0.06886,0.05838-0.16984,0.05838-0.2387,0l-4.02066-3.40882c-5.53998-4.70001-8.81-12.12-8.81-19.97998l-0.00001-1.68753c0-0.38642,0.42222-0.58507,0.75086-0.38179c1.83846,1.1372,5.85839,0.4789,8.6692-0.94069c1.54999-0.77002,2.81-1.77997,3.29999-2.84998c0.09998-0.20001,0.37-0.21002,0.46002-0.01001c0.50995,1.07001,1.81995,2.08997,3.41998,2.85999c3.13,1.53998,7.39996,2.22998,8.96997,0.72003C36.73984,12.87127,36.96988,12.96124,36.95987,13.15124z";
 
 function ShieldIcon({ state = "full", size = 52 }) {
-  const topLeft  = (state === "full" || state === "half") ? SHIELD_BLUE : SHIELD_GREY;
-  const botRight = state === "full" ? SHIELD_BLUE : SHIELD_GREY;
-
+  const uid = `sh_${state}_${size}`;
   return (
     <Svg width={size} height={size} viewBox="10 7 28 34">
-      {/* Fond gris */}
-      <Path d="M36.95987,13.15124l-0.02002,2.14001c0,7.85998-3.27002,15.27997-8.81,19.97998l-4.02067,3.40882c-0.06886,0.05838-0.16984,0.05838-0.2387,0l-4.02066-3.40882c-5.53998-4.70001-8.81-12.12-8.81-19.97998l-0.00001-1.68753c0-0.38642,0.42222-0.58507,0.75086-0.38179c1.83846,1.1372,5.85839,0.4789,8.6692-0.94069c1.54999-0.77002,2.81-1.77997,3.29999-2.84998c0.09998-0.20001,0.37-0.21002,0.46002-0.01001c0.50995,1.07001,1.81995,2.08997,3.41998,2.85999c3.13,1.53998,7.39996,2.22998,8.96997,0.72003C36.73984,12.87127,36.96988,12.96124,36.95987,13.15124z" fill={SHIELD_GREY} />
-      {/* Quadrant bas-droit */}
-      <Path d="M23.95421,24.03353v12.35819c0,0,6.91794-4.12646,9.61124-12.35819H23.95421z" fill={botRight} />
-      {/* Quadrant haut-gauche */}
-      <Path d="M23.95421,12.09101v11.94252h-9.61124c0,0-1.74528-4.5543-1.37527-8.52826C12.9677,15.50527,18.20421,16.46545,23.95421,12.09101z" fill={topLeft} />
-      {/* Contour intérieur */}
-      <Path d="M12.84042,15.48541c0.05371,7.23779,3.10059,14.10937,8.17383,18.41309l2.97559,2.52344l2.97607-2.52344c5.07617-4.30664,8.12353-11.18408,8.17334-18.42676c-2.58398,0.43506-5.9165-0.40771-8.29346-1.57471c-1.14502-0.55566-2.0957-1.18262-2.8335-1.85986c-0.71582,0.67432-1.6377,1.29932-2.74707,1.854C18.92295,15.07378,15.49228,15.94293,12.84042,15.48541z" fill="none" stroke="#303030" strokeWidth="0.7" strokeLinecap="round" strokeLinejoin="round" />
-      {/* Contour extérieur */}
-      <Path d="M36.95987,13.15124l-0.02002,2.14001c0,7.85998-3.27002,15.27997-8.81,19.97998l-4.02067,3.40882c-0.06886,0.05838-0.16984,0.05838-0.2387,0l-4.02066-3.40882c-5.53998-4.70001-8.81-12.12-8.81-19.97998l-0.00001-1.68753c0-0.38642,0.42222-0.58507,0.75086-0.38179c1.83846,1.1372,5.85839,0.4789,8.6692-0.94069c1.54999-0.77002,2.81-1.77997,3.29999-2.84998c0.09998-0.20001,0.37-0.21002,0.46002-0.01001c0.50995,1.07001,1.81995,2.08997,3.41998,2.85999c3.13,1.53998,7.39996,2.22998,8.96997,0.72003C36.73984,12.87127,36.96988,12.96124,36.95987,13.15124z" fill="none" stroke="#303030" strokeWidth="0.7" strokeLinecap="round" strokeLinejoin="round" />
-      {/* Croix de séparation */}
-      <Path d="M24.0123,12.03716 L23.98984,36.42193" fill="none" stroke="#303030" strokeWidth="0.7" strokeLinecap="round" />
-      <Path d="M14.34298,24.03353 L33.56545,24.03353" fill="none" stroke="#303030" strokeWidth="0.7" strokeLinecap="round" />
+      <Defs>
+        <ClipPath id={`cl_${uid}`}>
+          <Rect x="0" y="0" width="24" height="48" />
+        </ClipPath>
+      </Defs>
+      {/* Fond gris toujours présent */}
+      <Path d={SHIELD_PATH} fill={SHIELD_GREY} />
+      {/* Partie bleue selon état */}
+      {state === "full" && <Path d={SHIELD_PATH} fill={SHIELD_BLUE} />}
+      {state === "half" && <Path d={SHIELD_PATH} fill={SHIELD_BLUE} clipPath={`url(#cl_${uid})`} />}
+      {/* Contour blanc + liseré noir fin */}
+      <Path d={SHIELD_PATH} fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <Path d={SHIELD_PATH} fill="none" stroke="#303030" strokeWidth="0.5" strokeLinecap="round" strokeLinejoin="round" />
     </Svg>
   );
 }
@@ -1243,6 +1242,13 @@ export default function App() {
   // Sync depuis le background quand l'app revient au premier plan
   useEffect(() => {
     const sub = AppState.addEventListener("change", async nextState => {
+      if (nextState === "background" && !activeRef.current) {
+        // App fermée sans trajet actif → arrêter le foreground service
+        try {
+          const isRegistered = await TaskManager.isTaskRegisteredAsync(BG_TASK);
+          if (isRegistered) await Location.stopLocationUpdatesAsync(BG_TASK);
+        } catch {}
+      }
       if (nextState === "active" && activeRef.current) {
         try {
           // Lire la trajectoire accumulée en arrière-plan
@@ -1262,6 +1268,13 @@ export default function App() {
             if (bgState.dist) { distRef.current = bgState.dist; setDist(bgState.dist); }
             if (bgState.speed != null) setSpeed(bgState.speed);
           }
+        } catch {}
+      }
+      // Si l'app passe en arrière-plan sans trajet actif → arrêter le foreground service
+      if (nextState === "background" && !activeRef.current) {
+        try {
+          const isRegistered = await TaskManager.isTaskRegisteredAsync(BG_TASK);
+          if (isRegistered) await Location.stopLocationUpdatesAsync(BG_TASK);
         } catch {}
       }
     });
