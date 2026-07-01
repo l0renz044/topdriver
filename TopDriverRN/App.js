@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.59-RN";
+const APP_VERSION = "v6.60-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -184,6 +184,16 @@ TaskManager.defineTask(BG_TASK, async ({ data, error }) => {
     // Si le trajet n'est plus actif (app fermée), on arrête le service
     const tripActive = await AsyncStorage.getItem(TRIP_ACTIVE_KEY);
     if (tripActive !== "true") {
+      try { await Location.stopLocationUpdatesAsync(BG_TASK); } catch {}
+      bgTaskRunning = false;
+      return;
+    }
+    // Vérifier si l'app est toujours vivante via un heartbeat
+    // L'app React met à jour td_heartbeat toutes les secondes pendant un trajet actif
+    // Si le heartbeat date de plus de 10s, l'app a été fermée brutalement
+    const heartbeat = await AsyncStorage.getItem("td_heartbeat");
+    if (heartbeat && Date.now() - parseInt(heartbeat, 10) > 10000) {
+      await AsyncStorage.setItem(TRIP_ACTIVE_KEY, "false");
       try { await Location.stopLocationUpdatesAsync(BG_TASK); } catch {}
       bgTaskRunning = false;
       return;
@@ -1214,6 +1224,9 @@ export default function App() {
   useEffect(() => { bipRef.current = bipEnabled; }, [bipEnabled]);
 
   useEffect(() => {
+    // Réinitialiser le flag de trajet actif au démarrage
+    // (en cas de fermeture brutale, le TaskManager s'arrêtera au prochain tick)
+    AsyncStorage.setItem(TRIP_ACTIVE_KEY, "false");
     loadReps().then(setReports);
     // Vérifier si une nouvelle version est disponible
     fetch(VERSION_CHECK_URL, { headers: { "Cache-Control": "no-cache" } })
@@ -1397,6 +1410,8 @@ export default function App() {
     let lastSyncedLen = 0;
     syncInterval.current = setInterval(async () => {
       try {
+        // Heartbeat : signale que l'app React est vivante
+        AsyncStorage.setItem("td_heartbeat", String(Date.now()));
         const rawTraj = await AsyncStorage.getItem(BG_TRAJ_KEY);
         if (rawTraj) {
           const bgTraj = JSON.parse(rawTraj);
