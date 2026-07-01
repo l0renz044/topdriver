@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.58-RN";
+const APP_VERSION = "v6.59-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -145,9 +145,10 @@ function haversine(la1, lo1, la2, lo2) {
 // BACKGROUND LOCATION TASK
 // ═══════════════════════════════════════
 const BG_TASK = "topdriver-bg-location";
-const BG_TRAJ_KEY = "td_bg_traj";     // trajectoire accumulée
-const BG_STATE_KEY = "td_bg_state";   // état partagé (vitesse, limite, épisodes)
-const OSM_ENDPOINTS_KEY = "td_osm_endpoints"; // endpoints OSM configurés par l'utilisateur
+const BG_TRAJ_KEY = "td_bg_traj";
+const BG_STATE_KEY = "td_bg_state";
+const OSM_ENDPOINTS_KEY = "td_osm_endpoints";
+const TRIP_ACTIVE_KEY = "td_trip_active";
 
 // Helpers disponibles dans le contexte background (pas de React)
 const bgHaversine = (la1, lo1, la2, lo2) => {
@@ -176,10 +177,17 @@ async function flushBgTrajCache() {
 
 TaskManager.defineTask(BG_TASK, async ({ data, error }) => {
   if (error || !data?.locations?.length) return;
-  if (bgTaskRunning) return; // une exécution est déjà en cours (ex: fetch OSM lent) -> on ignore ce tick
+  if (bgTaskRunning) return;
   bgTaskRunning = true;
 
   try {
+    // Si le trajet n'est plus actif (app fermée), on arrête le service
+    const tripActive = await AsyncStorage.getItem(TRIP_ACTIVE_KEY);
+    if (tripActive !== "true") {
+      try { await Location.stopLocationUpdatesAsync(BG_TASK); } catch {}
+      bgTaskRunning = false;
+      return;
+    }
     const loc = data.locations[0];
     const lat = loc.coords.latitude;
     const lon = loc.coords.longitude;
@@ -1355,6 +1363,7 @@ export default function App() {
     resetBgTrajCache();
     const now = new Date();
     setStartTime(now); startTimeRef.current = now;
+    AsyncStorage.setItem(TRIP_ACTIVE_KEY, "true");
     setActive(true); setGpsStatus("searching");
 
     // Démarrer le foreground service si permission accordée (pour l'arrière-plan)
@@ -1525,6 +1534,7 @@ export default function App() {
     }
     // Synchroniser l'état traj depuis la ref (pas mis à jour en temps réel pendant le trajet)
     setTraj([...trajRef.current]);
+    AsyncStorage.setItem(TRIP_ACTIVE_KEY, "false");
     setActive(false); setSpeed(0); setEndTime(new Date());
     if (typeof locSub.current?.remove === "function") {
       locSub.current.remove();
