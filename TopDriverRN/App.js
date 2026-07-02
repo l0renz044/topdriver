@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.63-RN";
+const APP_VERSION = "v6.64-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -165,12 +165,15 @@ let bgStateCache = null; // état background en mémoire (évite relire AsyncSto
 let bgTaskRunning = false; // verrou anti-chevauchement
 let bgLastFlush = 0;
 let bgLastStateFlush = 0;
+let bgLastTripCheck = 0; // dernier contrôle du flag trajet actif
+let sharedCurrentLimit = null; // dernière limite OSM connue, partagée avec le TaskManager
 
 function resetBgTrajCache() {
   bgTrajCache = [];
   bgStateCache = null;
   bgLastFlush = 0;
   bgLastStateFlush = 0;
+  bgLastTripCheck = 0;
 }
 
 async function flushBgTrajCache() {
@@ -189,11 +192,16 @@ TaskManager.defineTask(BG_TASK, async ({ data, error }) => {
 
   try {
     // Si le trajet n'est plus actif (app fermée), on arrête le service
-    const tripActive = await AsyncStorage.getItem(TRIP_ACTIVE_KEY);
-    if (tripActive !== "true") {
-      try { await Location.stopLocationUpdatesAsync(BG_TASK); } catch {}
-      bgTaskRunning = false;
-      return;
+    // (contrôle limité à 1 lecture AsyncStorage toutes les 10s)
+    const nowCheck = Date.now();
+    if (nowCheck - bgLastTripCheck > 10000) {
+      bgLastTripCheck = nowCheck;
+      const tripActive = await AsyncStorage.getItem(TRIP_ACTIVE_KEY);
+      if (tripActive !== "true") {
+        try { await Location.stopLocationUpdatesAsync(BG_TASK); } catch {}
+        bgTaskRunning = false;
+        return;
+      }
     }
     const loc = data.locations[0];
     const lat = loc.coords.latitude;
@@ -236,7 +244,7 @@ TaskManager.defineTask(BG_TASK, async ({ data, error }) => {
 
     // Ajouter le point au cache mémoire (pas d'I/O disque ici)
     if (added) {
-      const lastKnownLimit = state.lastLimitOSM ?? null;
+      const lastKnownLimit = sharedCurrentLimit ?? state.lastLimitOSM ?? null;
       bgTrajCache.push({ lat, lon, t: now, speed: spd, limitOSM: lastKnownLimit });
       if (bgTrajCache.length > 5000) bgTrajCache.splice(0, bgTrajCache.length - 5000);
     }
@@ -451,97 +459,29 @@ async function importReport() {
 // ── Consolidation précise (transitions de limite uniquement) ──
 // Calcule toujours les épisodes en mode Strict (seuil = limite réelle).
 // Le score par mode de tolérance est recalculé séparément via filterEpisodesForMode.
-async function consolidateInfractions(traj, onProgress) {
-  if (!traj || traj.length < 2) return { episodes: [], attempts: 0, failures: 0 };
-
-  const INTERP_DIST = 0.030; // 30m en km
-
-  // Passe 1 : identifier le travail à faire
-  //  - transitions : segments entre 2 points réels avec limitOSM différent et connu -> interpolation
-  //  - trous : points réels avec limitOSM == null -> fetch direct sur ce point
-  const transitions = [];
-  let gapCount = 0;
-  for (let i = 0; i < traj.length; i++) {
-    const p = traj[i];
-    if (p.limitOSM == null) gapCount++;
-    if (i < traj.length - 1) {
-      const p1 = traj[i], p2 = traj[i + 1];
-      const lim1 = p1.limitOSM, lim2 = p2.limitOSM;
-      if (lim1 != null && lim2 != null && lim1 !== lim2) {
-        const segDist = haversine(p1.lat, p1.lon, p2.lat, p2.lon);
-        if (segDist > INTERP_DIST) {
-          const steps = Math.floor(segDist / INTERP_DIST);
-          transitions.push({ i, p1, p2, steps });
-        }
-      }
-    }
-  }
-  const totalPoints = transitions.reduce((s, tr) => s + tr.steps, 0) + gapCount;
-  if (onProgress) onProgress(0, totalPoints);
-
-  // Passe 2 : construire la liste enrichie, en comblant les trous et en interpolant les transitions
-  const enriched = [];
+// Exécute des tâches async avec un nombre maximal de requêtes simultanées
+const OSM_FETCH_CONCURRENCY = 4;
+async function runWithConcurrency(taskFns, concurrency, onItemDone) {
+  if (!taskFns.length) return [];
+  let next = 0;
   let done = 0;
-  let attempts = 0, failures = 0;
-  let trIdx = 0;
-
-  for (let i = 0; i < traj.length - 1; i++) {
-    const p1 = traj[i], p2 = traj[i + 1];
-
-    // Combler le trou sur p1 si besoin (fetch direct, pas d'interpolation)
-    if (p1.limitOSM == null) {
-      attempts++;
-      try {
-        const info = await fetchLimit(p1.lat, p1.lon);
-        if (info.src === "hors ligne") failures++;
-        p1.limitOSM = info.limit;
-      } catch { failures++; p1.limitOSM = 50; }
+  const results = new Array(taskFns.length);
+  async function worker() {
+    while (next < taskFns.length) {
+      const i = next++;
+      results[i] = await taskFns[i]();
       done++;
-      if (onProgress) onProgress(done, totalPoints);
-    }
-    enriched.push(p1);
-
-    if (trIdx < transitions.length && transitions[trIdx].i === i) {
-      const { steps } = transitions[trIdx];
-      trIdx++;
-      for (let s = 1; s <= steps; s++) {
-        const ratio = s / (steps + 1);
-        const ipt = {
-          lat: p1.lat + (p2.lat - p1.lat) * ratio,
-          lon: p1.lon + (p2.lon - p1.lon) * ratio,
-          speed: p1.speed + (p2.speed - p1.speed) * ratio,
-          t: p1.t + (p2.t - p1.t) * ratio,
-          limitOSM: null,
-          interpolated: true,
-        };
-        attempts++;
-        try {
-          const info = await fetchLimit(ipt.lat, ipt.lon);
-          if (info.src === "hors ligne") failures++;
-          ipt.limitOSM = info.limit;
-        } catch { failures++; ipt.limitOSM = p1.limitOSM; }
-        enriched.push(ipt);
-        done++;
-        if (onProgress) onProgress(done, totalPoints);
-      }
+      if (onItemDone) onItemDone(done);
     }
   }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, taskFns.length) }, () => worker())
+  );
+  return results;
+}
 
-  // Combler le trou sur le tout dernier point si besoin
-  const lastPt = traj[traj.length - 1];
-  if (lastPt.limitOSM == null) {
-    attempts++;
-    try {
-      const info = await fetchLimit(lastPt.lat, lastPt.lon);
-      if (info.src === "hors ligne") failures++;
-      lastPt.limitOSM = info.limit;
-    } catch { failures++; lastPt.limitOSM = 50; }
-    done++;
-    if (onProgress) onProgress(done, totalPoints);
-  }
-  enriched.push(lastPt);
-
-  // Recalculer les épisodes sur la liste enrichie (toujours mode Strict)
+// Construit les épisodes d'infraction à partir d'une trajectoire enrichie
+function episodesFromEnriched(enriched) {
   const episodes = [];
   let curEp = null;
   for (let i = 0; i < enriched.length; i++) {
@@ -569,7 +509,119 @@ async function consolidateInfractions(traj, onProgress) {
     const sev = sevFromOver(avgOver);
     if (sev !== "tolerance") episodes.push({ startTime: curEp.startTime, endTime: new Date(last.t).toISOString(), duration, avgOver, maxOver, limit: curEp.limit, sev, color: colorFromSev(sev), coords: curEp.coords });
   }
-  return { episodes, attempts, failures };
+  return episodes;
+}
+
+// Consolidation : comble les trous et interpole les transitions de limite.
+// endpoints : serveurs OSM configurés par l'utilisateur (sinon défauts).
+// Les fetches se font en parallèle (4 max) pour accélérer le post-traitement.
+async function consolidateInfractions(traj, onProgress, endpoints) {
+  if (!traj || traj.length < 2) return { episodes: [], attempts: 0, failures: 0 };
+
+  const INTERP_DIST = 0.030; // 30m en km
+  const trajCopy = traj.map(p => ({ ...p }));
+  let attempts = 0, failures = 0;
+
+  const fetchLimitTracked = async (lat, lon, fallback = 50) => {
+    attempts++;
+    try {
+      const info = await fetchLimit(lat, lon, endpoints);
+      if (info.src === "hors ligne") failures++;
+      return info.limit;
+    } catch {
+      failures++;
+      return fallback;
+    }
+  };
+
+  // Phase 1 : combler les trous (points réels sans limitOSM) en parallèle
+  const gapIndices = [];
+  for (let i = 0; i < trajCopy.length; i++) {
+    if (trajCopy[i].limitOSM == null) gapIndices.push(i);
+  }
+
+  // Phase 2 (préparation) : identifier les transitions de limite à interpoler
+  // (on la calcule après le comblement des trous, car les limites changent)
+  let done = 0;
+
+  if (gapIndices.length > 0) {
+    if (onProgress) onProgress(0, gapIndices.length);
+    await runWithConcurrency(
+      gapIndices.map(idx => async () => {
+        trajCopy[idx].limitOSM = await fetchLimitTracked(trajCopy[idx].lat, trajCopy[idx].lon);
+      }),
+      OSM_FETCH_CONCURRENCY,
+      d => { done = d; if (onProgress) onProgress(done, gapIndices.length); }
+    );
+  }
+
+  // Identifier les transitions maintenant que les trous sont comblés
+  const transitions = [];
+  const interpPoints = [];
+  for (let i = 0; i < trajCopy.length - 1; i++) {
+    const p1 = trajCopy[i], p2 = trajCopy[i + 1];
+    const lim1 = p1.limitOSM, lim2 = p2.limitOSM;
+    if (lim1 != null && lim2 != null && lim1 !== lim2) {
+      const segDist = haversine(p1.lat, p1.lon, p2.lat, p2.lon);
+      if (segDist > INTERP_DIST) {
+        const steps = Math.floor(segDist / INTERP_DIST);
+        transitions.push({ i, steps });
+        for (let s = 1; s <= steps; s++) {
+          const ratio = s / (steps + 1);
+          interpPoints.push({
+            segIdx: i,
+            step: s,
+            fallback: p1.limitOSM ?? 50,
+            ipt: {
+              lat: p1.lat + (p2.lat - p1.lat) * ratio,
+              lon: p1.lon + (p2.lon - p1.lon) * ratio,
+              speed: p1.speed + (p2.speed - p1.speed) * ratio,
+              t: p1.t + (p2.t - p1.t) * ratio,
+              limitOSM: null,
+              interpolated: true,
+            },
+          });
+        }
+      }
+    }
+  }
+
+  const totalPoints = gapIndices.length + interpPoints.length;
+  done = gapIndices.length;
+  if (interpPoints.length > 0) {
+    if (onProgress && totalPoints > 0) onProgress(done, totalPoints);
+    await runWithConcurrency(
+      interpPoints.map(item => async () => {
+        item.ipt.limitOSM = await fetchLimitTracked(item.ipt.lat, item.ipt.lon, item.fallback);
+      }),
+      OSM_FETCH_CONCURRENCY,
+      d => { if (onProgress) onProgress(gapIndices.length + d, totalPoints); }
+    );
+  } else if (onProgress && totalPoints > 0) {
+    onProgress(totalPoints, totalPoints);
+  }
+
+  // Reconstruire la trajectoire enrichie (points réels + interpolés, dans l'ordre)
+  const interpBySeg = new Map();
+  for (const item of interpPoints) {
+    if (!interpBySeg.has(item.segIdx)) interpBySeg.set(item.segIdx, []);
+    interpBySeg.get(item.segIdx).push(item);
+  }
+  for (const arr of interpBySeg.values()) arr.sort((a, b) => a.step - b.step);
+
+  const enriched = [];
+  let trIdx = 0;
+  for (let i = 0; i < trajCopy.length - 1; i++) {
+    enriched.push(trajCopy[i]);
+    if (trIdx < transitions.length && transitions[trIdx].i === i) {
+      const interps = interpBySeg.get(i) || [];
+      for (const { ipt } of interps) enriched.push(ipt);
+      trIdx++;
+    }
+  }
+  enriched.push(trajCopy[trajCopy.length - 1]);
+
+  return { episodes: episodesFromEnriched(enriched), attempts, failures };
 }
 
 // ── Beep ─────────────────────────────────────
@@ -1241,9 +1293,13 @@ export default function App() {
   const bipRef = useRef(true);
 
   useEffect(() => { activeRef.current = active; }, [active]);
-  useEffect(() => { limRef.current = limitInfo; }, [limitInfo]);
+  useEffect(() => { limRef.current = limitInfo; sharedCurrentLimit = limitInfo.limit; }, [limitInfo]);
   useEffect(() => { coolRef.current = zoneCooldown; }, [zoneCooldown]);
   useEffect(() => { bipRef.current = bipEnabled; }, [bipEnabled]);
+  const pollUrbanRef = useRef("5");
+  const pollRoadRef = useRef("15");
+  useEffect(() => { pollUrbanRef.current = pollUrban; }, [pollUrban]);
+  useEffect(() => { pollRoadRef.current = pollRoad; }, [pollRoad]);
 
   useEffect(() => {
     loadReps().then(setReports);
@@ -1308,13 +1364,6 @@ export default function App() {
             if (bgState.dist) { distRef.current = bgState.dist; setDist(bgState.dist); }
             if (bgState.speed != null) setSpeed(bgState.speed);
           }
-        } catch {}
-      }
-      // Si l'app passe en arrière-plan sans trajet actif → arrêter le foreground service
-      if (nextState === "background" && !activeRef.current) {
-        try {
-          const isRegistered = await TaskManager.isTaskRegisteredAsync(BG_TASK);
-          if (isRegistered) await Location.stopLocationUpdatesAsync(BG_TASK);
         } catch {}
       }
     });
@@ -1476,8 +1525,8 @@ export default function App() {
       // ≤ 70 km/h (zone urbaine/péri-urbaine) → polling rapide
       // > 70 km/h (nationale/autoroute) → polling lent
       const currentLimit = limRef.current.limit;
-      const urbanMs = Math.max(2, parseInt(pollUrban, 10) || 5) * 1000;
-      const roadMs = Math.max(2, parseInt(pollRoad, 10) || 15) * 1000;
+      const urbanMs = Math.max(2, parseInt(pollUrbanRef.current, 10) || 5) * 1000;
+      const roadMs = Math.max(2, parseInt(pollRoadRef.current, 10) || 15) * 1000;
       adaptRef.current = currentLimit <= 70 ? urbanMs : roadMs;
 
       // Ne pas interroger OSM si aucun nouveau point de trajectoire n'a été retenu
@@ -1486,7 +1535,10 @@ export default function App() {
         osmAttemptsRef.current++;
         fetchLimit(lat, lon, osmEndpointsRef.current).then(info => {
           if (info.src === "hors ligne") osmFailuresRef.current++;
-          setOsmStats({ attempts: osmAttemptsRef.current, failures: osmFailuresRef.current });
+          // Limiter les re-renders : maj de l'état seulement toutes les 5 requêtes ou sur échec
+          if (info.src === "hors ligne" || osmAttemptsRef.current % 5 === 0) {
+            setOsmStats({ attempts: osmAttemptsRef.current, failures: osmFailuresRef.current });
+          }
           if (info.limit !== lastOsm.current) { coolRef.current = 3; setZoneCooldown(3); }
           lastOsm.current = info.limit; setLimitInfo(info); limRef.current = info;
         });
@@ -1566,6 +1618,8 @@ export default function App() {
     }
     // Synchroniser l'état traj depuis la ref (pas mis à jour en temps réel pendant le trajet)
     setTraj([...trajRef.current]);
+    // Synchroniser les stats OSM finales (throttlées pendant le trajet)
+    setOsmStats({ attempts: osmAttemptsRef.current, failures: osmFailuresRef.current });
     AsyncStorage.setItem(TRIP_ACTIVE_KEY, "false");
     setActive(false); setSpeed(0); setEndTime(new Date());
     if (typeof locSub.current?.remove === "function") {
@@ -1587,7 +1641,8 @@ export default function App() {
     try {
       const { episodes, attempts, failures } = await consolidateInfractions(
         trajRef.current,
-        (done, total) => setProcessingProgress({ done, total })
+        (done, total) => setProcessingProgress({ done, total }),
+        osmEndpointsRef.current
       );
       setInfractions(episodes);
       currentConsolidated.current = { consolidatedDate: new Date().toISOString(), attempts, failures };
@@ -1628,7 +1683,7 @@ export default function App() {
     try {
       const { episodes, attempts, failures } = await consolidateInfractions(trajToUse, (done, total) => {
         setProcessingProgress({ done, total });
-      });
+      }, osmEndpointsRef.current);
       const filtered = filterEpisodesForRadarScore(episodes);
       const sc = computeScore(filtered);
       const consolidatedDate = new Date().toISOString();
@@ -1670,7 +1725,7 @@ export default function App() {
       const traj = data.points.map(p => ({ lat: p.lat, lon: p.lon, speed: p.speed, t: p.t, limitOSM: p.limitOSM ?? null }));
 
       showToast("⏳ Import en cours, consolidation...");
-      const { episodes, attempts, failures } = await consolidateInfractions(traj);
+      const { episodes, attempts, failures } = await consolidateInfractions(traj, null, osmEndpointsRef.current);
       const filtered = filterEpisodesForRadarScore(episodes);
       const sc = computeScore(filtered);
       const dist = traj.length > 1 ? traj.reduce((d, p, i) => i === 0 ? 0 : d + haversine(traj[i-1].lat, traj[i-1].lon, p.lat, p.lon), 0) : 0;
