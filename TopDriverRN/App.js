@@ -17,7 +17,7 @@ import * as DocumentPicker from "expo-document-picker";
 // ═══════════════════════════════════════
 // CONFIG & TRANSLATIONS
 // ═══════════════════════════════════════
-const APP_VERSION = "v6.62-RN";
+const APP_VERSION = "v6.63-RN";
 const VERSION_CHECK_URL = "https://raw.githubusercontent.com/l0renz044/topdriver/main/version.json";
 const APK_URL = "https://github.com/l0renz044/topdriver/raw/main/TopDriverRN_latest.apk";
 
@@ -161,17 +161,24 @@ const bgHaversine = (la1, lo1, la2, lo2) => {
 // Cache en mémoire de la trajectoire en cours (évite de relire/réécrire tout le JSON
 // à chaque position GPS reçue — un seul flush périodique vers AsyncStorage à la place).
 let bgTrajCache = null; // tableau de points, chargé une fois puis tenu à jour en mémoire
+let bgStateCache = null; // état background en mémoire (évite relire AsyncStorage à chaque tick)
 let bgTaskRunning = false; // verrou anti-chevauchement
 let bgLastFlush = 0;
+let bgLastStateFlush = 0;
 
 function resetBgTrajCache() {
   bgTrajCache = [];
+  bgStateCache = null;
   bgLastFlush = 0;
+  bgLastStateFlush = 0;
 }
 
 async function flushBgTrajCache() {
   if (bgTrajCache && bgTrajCache.length > 0) {
     try { await AsyncStorage.setItem(BG_TRAJ_KEY, JSON.stringify(bgTrajCache)); } catch {}
+  }
+  if (bgStateCache) {
+    try { await AsyncStorage.setItem(BG_STATE_KEY, JSON.stringify(bgStateCache)); } catch {}
   }
 }
 
@@ -203,8 +210,14 @@ TaskManager.defineTask(BG_TASK, async ({ data, error }) => {
       } catch { bgTrajCache = []; }
     }
 
-    const rawState = await AsyncStorage.getItem(BG_STATE_KEY);
-    const state = rawState ? JSON.parse(rawState) : { dist: 0, maxSpd: 0, lastPt: null };
+    // Charger le state background en mémoire une seule fois
+    if (bgStateCache === null) {
+      try {
+        const rawState = await AsyncStorage.getItem(BG_STATE_KEY);
+        bgStateCache = rawState ? JSON.parse(rawState) : { dist: 0, maxSpd: 0, lastPt: null };
+      } catch { bgStateCache = { dist: 0, maxSpd: 0, lastPt: null }; }
+    }
+    const state = bgStateCache;
 
     let added = false;
     if (!state.lastPt || bgHaversine(state.lastPt.lat, state.lastPt.lon, lat, lon) > 0.003) {
@@ -228,10 +241,11 @@ TaskManager.defineTask(BG_TASK, async ({ data, error }) => {
       if (bgTrajCache.length > 5000) bgTrajCache.splice(0, bgTrajCache.length - 5000);
     }
 
-    await AsyncStorage.setItem(BG_STATE_KEY, JSON.stringify(state));
-
-    // Flush de la trajectoire vers AsyncStorage seulement toutes les ~5s
-    // (pas à chaque point), pour limiter le coût d'écriture disque
+    // Flush state toutes les 3s, trajectoire toutes les 5s
+    if (now - bgLastStateFlush > 3000) {
+      bgLastStateFlush = now;
+      await AsyncStorage.setItem(BG_STATE_KEY, JSON.stringify(state));
+    }
     if (added && now - bgLastFlush > 5000) {
       bgLastFlush = now;
       await AsyncStorage.setItem(BG_TRAJ_KEY, JSON.stringify(bgTrajCache));
@@ -317,6 +331,24 @@ const UL = { motorway: 110, trunk: 90, primary: 50, secondary: 50, tertiary: 50,
 const BP = ["motorway", "trunk", "primary", "secondary", "tertiary", "motorway_link", "trunk_link", "primary_link", "secondary_link", "unclassified", "residential"];
 const parseMs = r => { if (!r) return null; const n = parseInt(r); if (!isNaN(n) && n > 0) return n; const sp = { "fr:urban": 50, "fr:rural": 80, "fr:motorway": 130, "walk": 20 }; return sp[r.trim().toLowerCase()] ?? null; };
 const cache = new Map();
+const CACHE_TTL_MS = 300000;
+const CACHE_MAX_SIZE = 500;
+
+function cacheSet(key, value) {
+  cache.set(key, value);
+  if (cache.size <= CACHE_MAX_SIZE) return;
+  // Nettoyage : d'abord les entrées expirées, puis les plus anciennes
+  const now = Date.now();
+  for (const [k, v] of cache) {
+    if (now - v.ts > CACHE_TTL_MS) cache.delete(k);
+  }
+  if (cache.size > CACHE_MAX_SIZE) {
+    const oldest = [...cache.entries()].sort((a, b) => a[1].ts - b[1].ts);
+    for (let i = 0; i < oldest.length - Math.floor(CACHE_MAX_SIZE / 2); i++) {
+      cache.delete(oldest[i][0]);
+    }
+  }
+}
 let currentEndpointIdx = 0; // index du serveur actif courant (sticky server)
 const OVERPASS_ENDPOINTS = [
   "https://overpass-api.de/api/interpreter",
@@ -328,7 +360,7 @@ async function fetchLimit(lat, lon, endpoints) {
   const ep = (endpoints && endpoints.length > 0) ? endpoints : OVERPASS_ENDPOINTS;
   const k = `${lat.toFixed(4)},${lon.toFixed(4)}`;
   const c = cache.get(k);
-  if (c && Date.now() - c.ts < 300000) return c;
+  if (c && Date.now() - c.ts < CACHE_TTL_MS) return c;
   const q = `[out:json][timeout:10];way(around:50,${lat},${lon})[highway][highway!~"footway|path|steps|cycleway"];out tags 5;`;
 
   // Stratégie sticky : un seul appel par point GPS
@@ -358,13 +390,13 @@ async function fetchLimit(lat, lon, endpoints) {
       const v = parseMs(el.tags?.maxspeed);
       if (v) {
         const res = { limit: v, src: "OSM", road: el.tags?.name || el.tags?.ref || "", ts: Date.now() };
-        cache.set(k, res); return res;
+        cacheSet(k, res); return res;
       }
     }
     const hw = sorted[0].tags?.highway || "";
     const urban = ["residential", "living_street", "service", "unclassified"].includes(hw);
     const res = { limit: (urban ? UL : DL)[hw] ?? 50, src: urban ? "agglo" : "défaut", road: sorted[0].tags?.name || "", ts: Date.now() };
-    cache.set(k, res); return res;
+    cacheSet(k, res); return res;
   } catch(e) {
     console.warn(`Overpass ${endpoint} failed:`, e.message);
     // Échec → on avance au serveur suivant pour le prochain point
